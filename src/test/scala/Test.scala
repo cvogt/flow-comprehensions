@@ -16,6 +16,27 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
   }
 
   test("flow comprehensions tests"){
+    assert(
+      Option(5) === sequence[Option]{
+        c => 5
+      }
+    )
+    assert(
+      Option(5) == sequence[Option]{ c =>
+        val o = ~Option(5)
+        o
+      }
+    )
+    /* // crashes scalac
+    assert(
+      Option(5) == sequence[Option]{ c =>
+        val o = Option(5)
+        o
+      }
+    )
+    */
+
+    /*
     // cartesian, inside assignment
     assert(
       sequence[List]{
@@ -48,7 +69,7 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
       assert(
         sequence[List]{ (~m,~m) }
         === 
-        ( for{ i <- m } yield (i,i) )
+        ( for{ i <- m; j <- m } yield (i,j) )
       )
     }
 
@@ -57,7 +78,7 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
       assert(
         sequence[Future]{ (~m,~m) }.get
         === 
-        ( for{ i <- m } yield (i,i) ).get
+        ( for{ i <- m; j <- m } yield (i,j) ).get
       )
     }
 
@@ -74,18 +95,19 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
     )
 
     // comprehension transformers
-    val m1 = List(1,2)
+    val m1 = List(0,1,2)
     assert(
       sequence[List]{ c =>
         val i = ~m1
         val j = ~List(2,3)
-        c.filter(true).reverse take 2 // TODO: maybe require an explicit call (M[FlowContext] => Unit), e.g. `.!`
+        c.filter(i > 0).reverse take 2 // TODO: maybe require an explicit call (M[FlowContext] => Unit), e.g. `.!`
         i * j
       }    
       ===
       ( for{
         i <- m1
         j <- List(2,3)
+        if i > 0
       } yield i * j ).reverse.take(2) 
     )
 
@@ -115,6 +137,6 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
         } yield i * j)
       )
     }
-    // TODO: more tests for nested flows
+*/
   }
 }

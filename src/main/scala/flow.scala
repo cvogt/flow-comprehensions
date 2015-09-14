@@ -3,26 +3,30 @@ package org.cvogt.flow
 import scala.language.higherKinds
 import scala.annotation.compileTimeOnly
 import scala.language.implicitConversions
+import scala.language.experimental.macros
 
-final class FlowContext private[flow]()
+final class FlowContext private()
 
 object `package`{
-  implicit def omitFlowContext[T](t: T): FlowContext => T = _ => t
-  implicit def omitFlowContextMonad[M[_],T](t: T): M[FlowContext] => T = _ => t
+  @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
+  implicit def omitFlowContext[T](t: T): FlowContext => T = ???
+  @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
+  implicit def omitFlowContextMonad[M[_],T](t: T): M[FlowContext] => T = ???
 
   object implicits{
     import scala.language.implicitConversions
     /** careful, this can lead to surprising effects */
     implicit def autoEmbed[M[_],T](m: M[T]): T = ???
   }
+  @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
   implicit class Embed[M[_],T](m: M[T]){
     /**
     Adds a monad to the surrounding comprehension
     
     Analog to .value in sbt and await in scala-async
 
-    Alternative name candidates or potential aliases: value, unary_&, ~, &, embed, flow, in, enter, open, dive
-    
+    Alternative name candidates or potential aliases: value, ~, &, embed, flow, in, enter, open, dive, each
+
     sequence{
       val x = ~xs
       ,,,
@@ -36,9 +40,16 @@ object `package`{
     } yield ...
 
     */
+    @compileTimeOnly("the prefix ~ operator can only be used in a flow comprehension scope such as sequence{...}, flow{...}")
+    def unary_~ : T = ???
+  }
+  /*
+  implicit class Embed2[M[_],K[_],T](m: K[M[T]]){
     //@compileTimeOnly("the prefix ~ operator can only be used in a flow comprehension scope such as sequence{...}, flow{...}")
     def unary_~ : T = ???
   }
+  */
+
   /**
   Works just like for-comprehensions with extra power.
 
@@ -87,15 +98,65 @@ object `package`{
 }
 
 sealed abstract class Comprehension[M[_]]{ // FIXME: what happens if calling a method on this type that is implemented by macros in children? no such method error?
-  def apply[T](scope: M[FlowContext] => T): M[T]
+  //def apply[T](scope: M[FlowContext] => T): M[T]
   //def apply[T](scope: => T): M[T]
 }
 class sequence[M[_]] extends Comprehension[M]{
-  def apply[T](scope: M[FlowContext] => T): M[T] = ???
+  def apply[T](scope: M[FlowContext] => T): M[T] = macro FlowMacros.sequence[M[_],T]
   //def apply[T](scope: => T): M[T] = ???
 }
 
 class flow[M[_]] extends Comprehension[M]{
+  @compileTimeOnly("")
   def apply[T](scope: M[FlowContext] => T): M[T] = ???
   //def apply[T](scope: => T): M[T] = ???
 }
+
+import scala.reflect.macros.blackbox
+class FlowMacros(val c: blackbox.Context){
+  import c.universe._
+  val pkg = q"org.cvogt.flow.`package`"
+  val conv = q"$pkg.omitFlowContextMonad"
+  object MyTransformer extends Transformer {
+    override def transform(tree: Tree) = {
+      val t = tree match {
+        //case q"~$v" => 
+        case _ => tree
+      }
+      super.transform(t)
+    }
+  }
+
+  /*
+  sealed trait Statements
+  case class Block(binding: Option[ValDef], stats: Seq[Tree], rest: Statements) extends Statements
+  case class End(stats: Seq[Tree]) extends Statements
+  */
+
+  def sequence[M: c.WeakTypeTag, T: c.WeakTypeTag](scope: Tree): Tree = {
+    val code = scope match {
+      case q"($context) => $e" =>
+        val companion = weakTypeOf[M].typeSymbol.companion
+        val transformed = e match {
+          case q"""
+            $valdef
+            $u
+          """ =>
+            val (v,m) = valdef match {
+              case q"val $v = ~$e($m)" => (v,m)
+            }
+            val compiler = c.universe.asInstanceOf[scala.tools.nsc.Global]
+
+            val mods = Modifiers(Flag.PARAM)
+            val param = ValDef(mods, v, TypeTree(), EmptyTree)
+            param.asInstanceOf[compiler.Tree].setSymbol(valdef.symbol.asInstanceOf[compiler.Symbol])
+            q"$m.map($param => $u)"
+          case cn => q"$companion.apply($cn)"
+        }
+        transformed
+      case x => throw new Exception(x.toString)
+    }
+    code
+  }
+}
+
