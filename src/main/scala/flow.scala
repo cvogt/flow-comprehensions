@@ -145,29 +145,31 @@ class FlowMacros(val c: blackbox.Context){
     val code = scope match {
       case q"($context) => $e" =>
         val companion = weakTypeOf[M].typeSymbol.companion
+        //println("-"*80)
+        //println(showRaw(e))
         val transformed = e match {
           case q"""
-            ..$valdefs
+            ..$statements
             $result
           """ =>
-            valdefs.foldRight(
+            statements.foldRight(
               q"$companion.apply($result)"
             ){
-              case (valdef,r) =>
-                val (v,m) = valdef match {
-                  case q"val $v = ~$e($m)" => (v,m)
-                }
-
+              case (valdef @ q"val $v: $tpe = ~$e($m)",r) =>
                 val mods = Modifiers(Flag.PARAM)
-                val param = ValDef(mods, v, TypeTree(), EmptyTree)
+                val param = ValDef(mods, v, tpe, EmptyTree)
                 param.setSymbol( valdef.symbol )
                 q"$m.flatMap($param => $r)"
+              case (other, r) => 
+                q"""
+                  $other
+                  $r
+                """
             }
-        }
-        transformed
+      }
+      c.untypecheck(transformed)
       case x => throw new Exception(x.toString)
     }
     code
   }
 }
-
