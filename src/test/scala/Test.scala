@@ -27,6 +27,13 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
         o
       }
     )
+    assert(
+      Option(15) == sequence[Option]{ c =>
+        val o1 = ~Option(5)
+        val o2 = ~Option(3)
+        o1 * o2
+      }
+    )
     /* // crashes scalac
     assert(
       Option(5) == sequence[Option]{ c =>

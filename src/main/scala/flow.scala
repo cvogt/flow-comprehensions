@@ -115,6 +115,14 @@ class flow[M[_]] extends Comprehension[M]{
 import scala.reflect.macros.blackbox
 class FlowMacros(val c: blackbox.Context){
   import c.universe._
+
+  val compiler = c.universe.asInstanceOf[scala.tools.nsc.Global]
+
+  implicit class SymbolSet(t: c.universe.Tree){
+    def setSymbol(s: Symbol) = {
+      t.asInstanceOf[compiler.Tree].setSymbol( s.asInstanceOf[compiler.Symbol] )
+    }
+  }
   val pkg = q"org.cvogt.flow.`package`"
   val conv = q"$pkg.omitFlowContextMonad"
   object MyTransformer extends Transformer {
@@ -139,19 +147,22 @@ class FlowMacros(val c: blackbox.Context){
         val companion = weakTypeOf[M].typeSymbol.companion
         val transformed = e match {
           case q"""
-            $valdef
-            $u
+            ..$valdefs
+            $result
           """ =>
-            val (v,m) = valdef match {
-              case q"val $v = ~$e($m)" => (v,m)
-            }
-            val compiler = c.universe.asInstanceOf[scala.tools.nsc.Global]
+            valdefs.foldRight(
+              q"$companion.apply($result)"
+            ){
+              case (valdef,r) =>
+                val (v,m) = valdef match {
+                  case q"val $v = ~$e($m)" => (v,m)
+                }
 
-            val mods = Modifiers(Flag.PARAM)
-            val param = ValDef(mods, v, TypeTree(), EmptyTree)
-            param.asInstanceOf[compiler.Tree].setSymbol(valdef.symbol.asInstanceOf[compiler.Symbol])
-            q"$m.map($param => $u)"
-          case cn => q"$companion.apply($cn)"
+                val mods = Modifiers(Flag.PARAM)
+                val param = ValDef(mods, v, TypeTree(), EmptyTree)
+                param.setSymbol( valdef.symbol )
+                q"$m.flatMap($param => $r)"
+            }
         }
         transformed
       case x => throw new Exception(x.toString)
