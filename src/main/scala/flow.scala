@@ -116,13 +116,6 @@ import scala.reflect.macros.blackbox
 class FlowMacros(val c: blackbox.Context){
   import c.universe._
 
-  val compiler = c.universe.asInstanceOf[scala.tools.nsc.Global]
-
-  implicit class SymbolSet(t: c.universe.Tree){
-    def setSymbol(s: Symbol) = {
-      t.asInstanceOf[compiler.Tree].setSymbol( s.asInstanceOf[compiler.Symbol] )
-    }
-  }
   val pkg = q"org.cvogt.flow.`package`"
   val conv = q"$pkg.omitFlowContextMonad"
   object MyTransformer extends Transformer {
@@ -135,19 +128,13 @@ class FlowMacros(val c: blackbox.Context){
     }
   }
 
-  /*
-  sealed trait Statements
-  case class Block(binding: Option[ValDef], stats: Seq[Tree], rest: Statements) extends Statements
-  case class End(stats: Seq[Tree]) extends Statements
-  */
-
   def sequence[M: c.WeakTypeTag, T: c.WeakTypeTag](scope: Tree): Tree = {
     val code = scope match {
       case q"($context) => $e" =>
         val companion = weakTypeOf[M].typeSymbol.companion
         //println("-"*80)
         //println(showRaw(e))
-        val transformed = e match {
+        val transformed = c.untypecheck(e) match {
           case q"""
             ..$statements
             $result
@@ -155,10 +142,8 @@ class FlowMacros(val c: blackbox.Context){
             statements.foldRight(
               q"$companion.apply($result)"
             ){
-              case (valdef @ q"val $v: $tpe = ~$e($m)",r) =>
-                val mods = Modifiers(Flag.PARAM)
-                val param = ValDef(mods, v, tpe, EmptyTree)
-                param.setSymbol( valdef.symbol )
+              case (valdef @ q"val $name: $tpe = ~$e($m)",r) =>
+                val param = q"val $name: $tpe"
                 q"$m.flatMap($param => $r)"
               case (other, r) => 
                 q"""
@@ -167,7 +152,7 @@ class FlowMacros(val c: blackbox.Context){
                 """
             }
       }
-      c.untypecheck(transformed)
+      transformed
       case x => throw new Exception(x.toString)
     }
     code
