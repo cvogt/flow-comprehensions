@@ -34,10 +34,10 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
         o1 * o2
       }
     )
+
     assert(
       Option(15) == sequence[Option]{ c =>
         val o1 = ~Option(5)
-        println("x")
         val o2 = ~Option(3)
         o1 * o2
       }
@@ -51,6 +51,33 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
         x * o1 * o2
       }
     )
+
+    assert(
+      List(3,4,6,8) == sequence[List]{ c =>
+        val l1 = ~List(1,2)
+        val l2 = ~List(3,4)
+        l1 * l2
+      }
+    )
+
+
+    assert(
+      List(8,6,4,3) == sequence[List]{ c =>
+        val l1 = ~List(1,2)
+        val l2 = ~List(3,4)
+        c.reverse
+        l1 * l2
+      }
+    )
+/*
+    assert(
+      List(6,8) == sequence[List]{ c =>
+        val l1 = ~List(1,2)
+        val l2 = ~List(3,4)
+        c.filter(l1 >= 2)
+        l1 * l2
+      }
+    )*/
     /* // crashes scalac
     assert(
       Option(5) == sequence[Option]{ c =>

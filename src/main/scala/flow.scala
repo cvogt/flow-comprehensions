@@ -102,13 +102,13 @@ sealed abstract class Comprehension[M[_]]{ // FIXME: what happens if calling a m
   //def apply[T](scope: => T): M[T]
 }
 class sequence[M[_]] extends Comprehension[M]{
-  def apply[T](scope: M[FlowContext] => T): M[T] = macro FlowMacros.sequence[M[_],T]
+  def apply[T](comprehension: M[FlowContext] => T): M[T] = macro FlowMacros.sequence[M[_],T]
   //def apply[T](scope: => T): M[T] = ???
 }
 
 class flow[M[_]] extends Comprehension[M]{
   @compileTimeOnly("")
-  def apply[T](scope: M[FlowContext] => T): M[T] = ???
+  def apply[T](comprehension: M[FlowContext] => T): M[T] = ???
   //def apply[T](scope: => T): M[T] = ???
 }
 
@@ -118,6 +118,7 @@ class FlowMacros(val c: blackbox.Context){
 
   val pkg = q"org.cvogt.flow.`package`"
   val conv = q"$pkg.omitFlowContextMonad"
+  /*
   object MyTransformer extends Transformer {
     override def transform(tree: Tree) = {
       val t = tree match {
@@ -127,34 +128,82 @@ class FlowMacros(val c: blackbox.Context){
       super.transform(t)
     }
   }
+  */
 
-  def sequence[M: c.WeakTypeTag, T: c.WeakTypeTag](scope: Tree): Tree = {
-    val code = scope match {
+  def sequence[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
+    comprehension match {
       case q"($context) => $e" =>
         val companion = weakTypeOf[M].typeSymbol.companion
-        //println("-"*80)
-        //println(showRaw(e))
-        val transformed = c.untypecheck(e) match {
-          case q"""
-            ..$statements
-            $result
-          """ =>
-            statements.foldRight(
-              q"$companion.apply($result)"
+        def unit(tree: Tree) = q"$companion.apply($tree)" // FIXME: this isn't great for Futures, is it?
+
+        // untypechecking only seems to work reliably upfront.
+        // As a consequence, all of the following processes pairs of
+        // corresponding typed trees and untyped tres so both variants
+        // are available as needed. The untyped trees are used
+        // to build the eventual resulting tree. The typed trees
+        // are used to examine the type information of the input
+        // trees.
+        // value names ending in T mean typed trees from here on.
+        // The same names excluding the T mean the corresponding untyped trees
+
+        (e, c.untypecheck(e)) match {
+          case (
+            q"""..$statementsT; $resultT""", // <- 
+            q"""..$statements;  $result """  // <- 
+          ) =>
+            /* The following folds over the comprehension statements from top to bottom.
+             * Every step results in a new scope (the names of values bound by the
+             * comprehension at this point) and a context, which is a function that takes
+             * a tree and embeds it into another tree that binds the required
+             * values. The context is effectively a continuation, which allows
+             * folding forward throw the sequence of statements while allowing
+             * the following statment decide how it handles the continuation of previous
+             * statments. This allows closing the iteration and assigning the result to
+             * a val for example, in order to call contextual transformers
+             * (sortBy, filter, ...) on the iteration up to this point.
+            */
+            val (_, continuation) = (statementsT zip statements).foldLeft(
+              ( List[(TermName,Tree)](), identity[Tree] _ )
             ){
-              case (valdef @ q"val $name: $tpe = ~$e($m)",r) =>
+              case (
+                ( scope, context ),
+                (
+                  valdefT @ q"val $nameT: $tpeT = ~$eT($mT)", // FIXME, we need to check that $e is Embed
+                  valdef  @ q"val $name : $tpe  = ~$e ($m )"
+                )
+              ) =>
                 val param = q"val $name: $tpe"
-                q"$m.flatMap($param => $r)"
-              case (other, r) => 
-                q"""
-                  $other
-                  $r
-                """
+                (
+                  (name, tpeT) :: scope,
+                  continue => context(q"$m.flatMap( $param => $continue )")
+                )
+              case ( ( scope, context ), (transformerT, transformer) ) if weakTypeOf[M].typeSymbol == transformerT.tpe.typeSymbol => // FIXME TypeSymbol only checks the higher-kinded type, but needs to also check the FlowContext type argument
+                // applies the transformations to `leaf` instead of the magical context handle
+                def refocus(tT: Tree, t: Tree, leaf: Tree): Tree = (tT,t) match {
+                  case (x@Ident(_),_) if weakTypeOf[M].typeSymbol == tT.tpe.typeSymbol => leaf
+                  case ( q"$lhsT.$rhsT", q"$lhs.$rhs" ) => q"${refocus(lhsT,lhs,leaf)}.$rhs"
+                  case ( q"$lhsT.$rhsT(..$argsT)", q"$lhs.$rhs(..$args)" ) => q"${refocus(lhsT,lhs,leaf)}.$rhs(..$args)"
+                }
+
+                val captured = context{
+                  val values = scope.map(_._1).map(Ident.apply _)
+                  unit(q"(..$values)")
+                }
+                val params = scope.map{ case(name, tpe) => ValDef(Modifiers(Flag.PARAM),name,tpe,EmptyTree) }
+                (scope, continue => q"""
+                  val lll = ${refocus(transformerT, transformer, captured)}
+                  lll.flatMap{
+                    ((..$params) => $continue).tupled
+                  }
+                """)
+              case ( ( scope, context ), (otherT, other) ) => 
+                (scope, continue => context(q"$other; $continue"))
             }
-      }
-      transformed
+            val res = continuation(unit(q"$result"))
+            //println(res)
+            res
+        }
       case x => throw new Exception(x.toString)
     }
-    code
   }
 }
