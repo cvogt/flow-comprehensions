@@ -190,6 +190,7 @@ class FlowMacros(val c: blackbox.Context){
                   unit(q"(..$values)")
                 }
                 val params = scope.map{ case(name, tpe) => ValDef(Modifiers(Flag.PARAM),name,tpe,EmptyTree) }
+                /// FIXME: use fresh name instead of lll
                 (scope, continue => q"""
                   val lll = ${refocus(transformerT, transformer, captured)}
                   lll.flatMap{
