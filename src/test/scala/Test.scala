@@ -64,9 +64,21 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
       List(8,6,4,3) == sequence[List]{ c =>
         val l1 = ~List(1,2)
         val l2 = ~List(3,4)
-        val unrelated = 1
         c(_.reverse)
-        l1 * l2 * unrelated
+        l1 * l2
+      }
+    )
+
+    assert(
+      List(32,24,8,6) == sequence[List]{ c =>
+        val l1 = ~List(1,2)
+        val l2 = ~List(3,4)
+        val unrelated = 2
+        def foo(i: Int) = i
+        val unrelated2 = foo(l1)
+        c(_.reverse)
+        // foo(l1) // does not compile
+        l1 * l2 * unrelated * unrelated2
       }
     )
 
