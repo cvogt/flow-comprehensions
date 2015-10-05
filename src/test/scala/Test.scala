@@ -98,6 +98,17 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
         l3 * l1 * l2
       }
     )
+
+    assert(
+      List(15,18,20,24,30,36,40,48) == sequence[List]{ c =>
+        val l1 = ~List(1,2)
+        val l2 = ~List(3,4)
+        val l3 = ~List(5,6)
+        c.map(identity)
+        l3 * l1 * l2
+      }
+    )
+
 /*
     assert(
       List(6,8) == sequence[List]{ c =>

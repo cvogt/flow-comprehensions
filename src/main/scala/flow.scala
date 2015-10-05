@@ -118,17 +118,19 @@ class FlowMacros(val c: blackbox.Context){
 
   val pkg = q"org.cvogt.flow.`package`"
   val conv = q"$pkg.omitFlowContextMonad"
-  /*
-  object MyTransformer extends Transformer {
+
+  object RemoveFlowContextTypeAnnotations extends Transformer {
     override def transform(tree: Tree) = {
       val t = tree match {
-        //case q"~$v" => 
-        case _ => tree
+        case q"$mods val $name : $ttree = $_" if ttree.symbol == weakTypeOf[FlowContext].typeSymbol =>
+          q"$mods val $name : ${TypeTree()}"
+        case q"$lhsT.$rhsT[..$ttrees](...$argsT)" if ttrees.map(_.symbol).contains( weakTypeOf[FlowContext].typeSymbol ) =>
+          q"$lhsT.$rhsT(...$argsT)"
+        case other => other
       }
       super.transform(t)
     }
   }
-  */
 
   def sequence[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
     comprehension match {
@@ -145,8 +147,7 @@ class FlowMacros(val c: blackbox.Context){
         // trees.
         // value names ending in T mean typed trees from here on.
         // The same names excluding the T mean the corresponding untyped trees
-
-        (e, c.untypecheck(e)) match {
+        (e, RemoveFlowContextTypeAnnotations.transform(c.untypecheck(e))) match {
           case (
             q"""..$statementsT; $resultT""", // <- 
             q"""..$statements;  $result """  // <- 
@@ -182,7 +183,7 @@ class FlowMacros(val c: blackbox.Context){
                 def refocus(tT: Tree, t: Tree, leaf: Tree): Tree = (tT,t) match {
                   case (x@Ident(_),_) if weakTypeOf[M].typeSymbol == tT.tpe.typeSymbol => leaf
                   case ( q"$lhsT.$rhsT", q"$lhs.$rhs" ) => q"${refocus(lhsT,lhs,leaf)}.$rhs"
-                  case ( q"$lhsT.$rhsT(..$argsT)", q"$lhs.$rhs(..$args)" ) => q"${refocus(lhsT,lhs,leaf)}.$rhs(..$args)"
+                  case ( q"$lhsT.$rhsT[..$tt](...$argsT)", q"$lhs.$rhs[..$t](...$args)" ) => q"${refocus(lhsT,lhs,leaf)}.$rhs(...$args)"
                 }
 
                 val captured = context{
