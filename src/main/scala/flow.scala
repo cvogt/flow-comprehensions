@@ -197,6 +197,17 @@ class FlowMacros(val c: blackbox.Context){
                     ((..$params) => $continue).tupled
                   }
                 """)
+              case (
+                ( scope, context ),
+                (
+                  valdefT @ q"val $nameT: $tpeT = $otherT",
+                  valdef  @ q"val $name : $tpe  = $other"
+                )
+              ) =>
+                (
+                  (name, tpeT) :: scope,
+                  continue => context(q"$valdef; $continue")
+                )
               case ( ( scope, context ), (otherT, other) ) => 
                 (scope, continue => context(q"$other; $continue"))
             }
