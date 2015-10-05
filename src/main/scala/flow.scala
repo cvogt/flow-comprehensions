@@ -110,7 +110,9 @@ class sequence[M[_]] extends Comprehension[M]{
   def apply[T](comprehension: MonadContext[M] => T): M[T] = macro FlowMacros.sequence[M[_],T]
   //def apply[T](scope: => T): M[T] = ???
 }
-
+object debugMacro{
+  def apply[T](tree: T): T = macro FlowMacros.debugMacro
+}
 /*
 class flow[M[_]] extends Comprehension[M]{
   @compileTimeOnly("")
@@ -141,11 +143,38 @@ class FlowMacros(val c: blackbox.Context){
     }
   }
 
+  /** like identity but prints desugared code and tree */
+  def debugMacro(tree: Tree): Tree = {
+    println("code:\n  "+tree)
+    println("Tree:\n  "+showRaw(tree))
+    tree
+  }
   def sequence[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
     comprehension match {
       case q"($flowContext) => $e" =>
         val companion = weakTypeOf[M].typeSymbol.companion
         def unit(tree: Tree) = q"$companion.apply($tree)" // FIXME: this isn't great for Futures, is it?
+
+        def transformExtract(tree: Tree): (List[Tree], Tree) = {
+          object transformer extends Transformer {
+            val extracted = collection.mutable.MutableList[Tree]()
+            override def transform(tree: Tree) = {
+              val t = tree match {
+                case t2@q"org.cvogt.flow.`package`.Embed[$m,$tpe]($expr).unary_~" => 
+                  val name = c.freshName
+                  val (statements, texpr) = transformExtract(expr)
+                  val v = q"val ${TermName(name)}: $tpe = org.cvogt.flow.`package`.Embed[$m,$tpe]($texpr).unary_~"
+                  extracted ++= (statements :+ v)
+                  q"${Ident(TermName(name))}"
+
+                case other => other
+              }
+              super.transform(t)
+            }
+          }
+          val res = transformer.transform(tree)
+          (transformer.extracted.to[List], res)
+        }
 
         // untypechecking only seems to work reliably upfront.
         // As a consequence, all of the following processes pairs of
