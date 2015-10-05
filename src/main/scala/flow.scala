@@ -178,8 +178,8 @@ class FlowMacros(val c: blackbox.Context){
               case (
                 ( scope, context ),
                 (
-                  valdefT @ q"val $nameT: $tpeT = ~$eT($mT)", // FIXME, we need to check that $e is Embed
-                  valdef  @ q"val $name : $tpe  = ~$e ($m )"
+                  valdefT @ q"val $nameT: $tpeT = ~org.cvogt.flow.`package`.Embed[..$tT]($mT)",
+                  valdef  @ q"val $name : $tpe  = ~org.cvogt.flow.`package`.Embed[..$t]($m )"
                 )
               ) =>
                 val param = q"val $name: ${TypeTree()}"
