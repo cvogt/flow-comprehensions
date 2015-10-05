@@ -5,13 +5,14 @@ import scala.annotation.compileTimeOnly
 import scala.language.implicitConversions
 import scala.language.experimental.macros
 
+@compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
 final class FlowContext private()
 
 object `package`{
   @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
-  implicit def omitFlowContext[T](t: T): FlowContext => T = ???
-  @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
-  implicit def omitFlowContextMonad[M[_],T](t: T): M[FlowContext] => T = ???
+  implicit def enableFlowScope[T](t: T): FlowContext => T = ???
+  //@compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
+  //implicit def unpackFlowContextMonad[M[_],T](t: T): M[FlowContext] => T = ???
 
   object implicits{
     import scala.language.implicitConversions
@@ -155,7 +156,7 @@ class FlowMacros(val c: blackbox.Context){
         // trees.
         // value names ending in T mean typed trees from here on.
         // The same names excluding the T mean the corresponding untyped trees
-        (e, RemoveFlowContextTypeAnnotations.transform(c.untypecheck(e))) match {
+        (e, c.untypecheck(e)) match {
           case (
             q"""..$statementsT; $resultT""", // <- 
             q"""..$statements;  $result """  // <- 
@@ -187,27 +188,54 @@ class FlowMacros(val c: blackbox.Context){
                   continue => context(q"$m.flatMap( $param => $continue )")
                 )
               case ( ( scope, context ), (q"$cT.apply($transformerT)", q"$c.apply($transformer)") ) if c.symbol == flowContext.symbol =>
+                val boundNames = scope.map(_._1).map(Ident.apply _)
+
+                object ReplaceFlowScope extends Transformer {
+                  override def transform(tree: Tree) = {
+                    val t = tree match {
+                      case t@q"org.cvogt.flow.`package`.enableFlowScope[..$t2]($expr)" =>
+                        val pattern =  pq"(..${scope.map(_._1)})"
+                        // FIXME: can we move the extractor below into the argument?
+                        q"""{
+                          arg =>
+                            val $pattern = arg
+                            ${transform(expr)}
+                        }"""
+                      case other => other
+                    }
+                    super.transform(t)
+                  }
+                }
                 val captured = context{
-                  val values = scope.map(_._1).map(Ident.apply _)
-                  unit(q"(..$values)")
+                  unit(q"(..$boundNames)")
                 }
                 val params = scope.map{ case(name, tpe) => ValDef(Modifiers(Flag.PARAM),name,tpe,EmptyTree) }
-                val closed = transformer match {
-                  case q"($arg) => $expr" => 
-                    val q"$_ val $name: $_ = $_" = arg
-                    q"""
-                      val $name = $captured
-                      $expr
-                    """
-                  case q"$other" => q"$other($captured)"
-                }
-                /// FIXME: use fresh name instead of lll
-                (scope, continue => q"""
-                  val lll = $closed
-                  lll.flatMap{
-                    ((..$params) => $continue).tupled
+                
+                val closed =  ReplaceFlowScope.transform(
+                  transformer match {
+                    case q"($arg) => $expr" => 
+                      val q"$_ val $name: $_ = $_" = arg
+                      q"""
+                        val $name = $captured
+                        $expr
+                      """
+                    case q"$other" => q"$other($captured)"
                   }
-                """)
+                )
+                /// FIXME: use fresh name instead of lll
+                (scope, continue => {
+                  val func =
+                    if(params.size > 1)
+                      q"((..$params) => $continue).tupled"
+                    else
+                      q"((..$params) => $continue)"
+                  q"""
+                    val lll = $closed
+                    lll.flatMap{
+                      $func            
+                    }
+                  """
+                })
               case (
                 ( scope, context ),
                 (
@@ -225,7 +253,7 @@ class FlowMacros(val c: blackbox.Context){
             val res = continuation(unit(q"$result"))
             //println(e)
             //println(res)
-            res
+            RemoveFlowContextTypeAnnotations.transform(res)
         }
       case x => throw new Exception(x.toString)
     }
