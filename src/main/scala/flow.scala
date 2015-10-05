@@ -181,7 +181,7 @@ class FlowMacros(val c: blackbox.Context){
                   valdef  @ q"val $name : $tpe  = ~$e ($m )"
                 )
               ) =>
-                val param = q"val $name: $tpe"
+                val param = q"val $name: ${TypeTree()}"
                 (
                   (name, tpeT) :: scope,
                   continue => context(q"$m.flatMap( $param => $continue )")
@@ -223,6 +223,7 @@ class FlowMacros(val c: blackbox.Context){
                 (scope, continue => context(q"$other; $continue"))
             }
             val res = continuation(unit(q"$result"))
+            //println(e)
             //println(res)
             res
         }
