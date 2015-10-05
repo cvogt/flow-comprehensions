@@ -187,7 +187,7 @@ class FlowMacros(val c: blackbox.Context){
                   (name, tpeT) :: scope,
                   continue => context(q"$m.flatMap( $param => $continue )")
                 )
-              case ( ( scope, context ), (q"$cT.apply($transformerT)", q"$c.apply($transformer)") ) if c.symbol == flowContext.symbol =>
+              case ( ( scope, context ), (q"$ctxT.apply($transformerT)", q"$ctx.apply($transformer)") ) if ctx.symbol == flowContext.symbol =>
                 val boundNames = scope.map(_._1).map(Ident.apply _)
 
                 object ReplaceFlowScope extends Transformer {
@@ -222,16 +222,16 @@ class FlowMacros(val c: blackbox.Context){
                     case q"$other" => q"$other($captured)"
                   }
                 )
-                /// FIXME: use fresh name instead of lll
                 (scope, continue => {
                   val func =
                     if(params.size > 1)
                       q"((..$params) => $continue).tupled"
                     else
                       q"((..$params) => $continue)"
+                  val name = c.freshName
                   q"""
-                    val lll = $closed
-                    lll.flatMap{
+                    val ${TermName(name)} = $closed
+                    ${Ident(TermName(name))}.flatMap{
                       $func            
                     }
                   """
