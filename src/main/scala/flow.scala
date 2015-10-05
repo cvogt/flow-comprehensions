@@ -101,16 +101,22 @@ sealed abstract class Comprehension[M[_]]{ // FIXME: what happens if calling a m
   //def apply[T](scope: M[FlowContext] => T): M[T]
   //def apply[T](scope: => T): M[T]
 }
+final class MonadContext[M[_]]{
+  @compileTimeOnly("The MonadContext type only makes sense in a flow comprehension scope and is supposed to be removed by the macro.")
+  def apply(transform: M[FlowContext] => M[FlowContext]) = ???
+}
 class sequence[M[_]] extends Comprehension[M]{
-  def apply[T](comprehension: M[FlowContext] => T): M[T] = macro FlowMacros.sequence[M[_],T]
+  def apply[T](comprehension: MonadContext[M] => T): M[T] = macro FlowMacros.sequence[M[_],T]
   //def apply[T](scope: => T): M[T] = ???
 }
 
+/*
 class flow[M[_]] extends Comprehension[M]{
   @compileTimeOnly("")
-  def apply[T](comprehension: M[FlowContext] => T): M[T] = ???
+  def apply[T](comprehension: MonadContext[M] => T): M[T] = ???
   //def apply[T](scope: => T): M[T] = ???
 }
+*/
 
 import scala.reflect.macros.blackbox
 class FlowMacros(val c: blackbox.Context){
@@ -124,6 +130,8 @@ class FlowMacros(val c: blackbox.Context){
       val t = tree match {
         case q"$mods val $name : $ttree = $_" if ttree.symbol == weakTypeOf[FlowContext].typeSymbol =>
           q"$mods val $name : ${TypeTree()}"
+        case q"$lhsT[..$ttrees](...$argsT)" if ttrees.map(_.symbol).contains( weakTypeOf[FlowContext].typeSymbol ) =>
+          q"$lhsT(...$argsT)"
         case q"$lhsT.$rhsT[..$ttrees](...$argsT)" if ttrees.map(_.symbol).contains( weakTypeOf[FlowContext].typeSymbol ) =>
           q"$lhsT.$rhsT(...$argsT)"
         case other => other
@@ -134,7 +142,7 @@ class FlowMacros(val c: blackbox.Context){
 
   def sequence[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
     comprehension match {
-      case q"($context) => $e" =>
+      case q"($flowContext) => $e" =>
         val companion = weakTypeOf[M].typeSymbol.companion
         def unit(tree: Tree) = q"$companion.apply($tree)" // FIXME: this isn't great for Futures, is it?
 
@@ -178,22 +186,24 @@ class FlowMacros(val c: blackbox.Context){
                   (name, tpeT) :: scope,
                   continue => context(q"$m.flatMap( $param => $continue )")
                 )
-              case ( ( scope, context ), (transformerT, transformer) ) if weakTypeOf[M].typeSymbol == transformerT.tpe.typeSymbol => // FIXME TypeSymbol only checks the higher-kinded type, but needs to also check the FlowContext type argument
-                // applies the transformations to `leaf` instead of the magical context handle
-                def refocus(tT: Tree, t: Tree, leaf: Tree): Tree = (tT,t) match {
-                  case (x@Ident(_),_) if weakTypeOf[M].typeSymbol == tT.tpe.typeSymbol => leaf
-                  case ( q"$lhsT.$rhsT", q"$lhs.$rhs" ) => q"${refocus(lhsT,lhs,leaf)}.$rhs"
-                  case ( q"$lhsT.$rhsT[..$tt](...$argsT)", q"$lhs.$rhs[..$t](...$args)" ) => q"${refocus(lhsT,lhs,leaf)}.$rhs(...$args)"
-                }
-
+              case ( ( scope, context ), (q"$cT.apply($transformerT)", q"$c.apply($transformer)") ) if c.symbol == flowContext.symbol =>
                 val captured = context{
                   val values = scope.map(_._1).map(Ident.apply _)
                   unit(q"(..$values)")
                 }
                 val params = scope.map{ case(name, tpe) => ValDef(Modifiers(Flag.PARAM),name,tpe,EmptyTree) }
+                val closed = transformer match {
+                  case q"($arg) => $expr" => 
+                    val q"$_ val $name: $_ = $_" = arg
+                    q"""
+                      val $name = $captured
+                      $expr
+                    """
+                  case q"$other" => q"$other($captured)"
+                }
                 /// FIXME: use fresh name instead of lll
                 (scope, continue => q"""
-                  val lll = ${refocus(transformerT, transformer, captured)}
+                  val lll = $closed
                   lll.flatMap{
                     ((..$params) => $continue).tupled
                   }

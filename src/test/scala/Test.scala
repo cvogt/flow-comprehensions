@@ -65,7 +65,7 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
         val l1 = ~List(1,2)
         val l2 = ~List(3,4)
         val unrelated = 1
-        c.reverse
+        c(_.reverse)
         l1 * l2 * unrelated
       }
     )
@@ -84,7 +84,7 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
         val l1 = ~List(1,2)
         val l2 = ~List(3,4)
         val l3 = ~List(5,6)
-        c.reverse
+        c(_.reverse)
         l3 * l1 * l2
       }
     )
@@ -93,7 +93,32 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
       List(40,48,30,36,20,24,15,18) == sequence[List]{ c =>
         val l1 = ~List(1,2)
         val l2 = ~List(3,4)
-        c.reverse
+        c(_.reverse)
+        val l3 = ~List(5,6)
+        l3 * l1 * l2
+      }
+    )
+
+    def reverse[T] = (_:List[T]).reverse
+
+    assert(
+      List(40,48,30,36,20,24,15,18) == sequence[List]{ c =>
+        val l1 = ~List(1,2)
+        val l2 = ~List(3,4)
+        c(reverse)
+        val l3 = ~List(5,6)
+        l3 * l1 * l2
+      }
+    )
+
+    implicit class IntListExtensions[T](l: List[T]){
+      def reverse2 = l.reverse
+    }
+    assert(
+      List(40,48,30,36,20,24,15,18) == sequence[List]{ c =>
+        val l1 = ~List(1,2)
+        val l2 = ~List(3,4)
+        c(_.reverse2)
         val l3 = ~List(5,6)
         l3 * l1 * l2
       }
@@ -104,7 +129,7 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
         val l1 = ~List(1,2)
         val l2 = ~List(3,4)
         val l3 = ~List(5,6)
-        c.map(identity)
+        c(_.map(identity))
         l3 * l1 * l2
       }
     )
