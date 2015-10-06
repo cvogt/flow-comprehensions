@@ -5,13 +5,14 @@ import scala.annotation.compileTimeOnly
 import scala.language.implicitConversions
 import scala.language.experimental.macros
 
+@compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
 final class FlowContext private()
 
 object `package`{
   @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
-  implicit def omitFlowContext[T](t: T): FlowContext => T = ???
-  @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
-  implicit def omitFlowContextMonad[M[_],T](t: T): M[FlowContext] => T = ???
+  implicit def enableFlowScope[T](t: T): FlowContext => T = ???
+  //@compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
+  //implicit def unpackFlowContextMonad[M[_],T](t: T): M[FlowContext] => T = ???
 
   object implicits{
     import scala.language.implicitConversions
@@ -101,16 +102,24 @@ sealed abstract class Comprehension[M[_]]{ // FIXME: what happens if calling a m
   //def apply[T](scope: M[FlowContext] => T): M[T]
   //def apply[T](scope: => T): M[T]
 }
+final class MonadContext[M[_]]{
+  @compileTimeOnly("The MonadContext type only makes sense in a flow comprehension scope and is supposed to be removed by the macro.")
+  def apply(transform: M[FlowContext] => M[FlowContext]) = ???
+}
 class sequence[M[_]] extends Comprehension[M]{
-  def apply[T](comprehension: M[FlowContext] => T): M[T] = macro FlowMacros.sequence[M[_],T]
+  def apply[T](comprehension: MonadContext[M] => T): M[T] = macro FlowMacros.sequence[M[_],T]
   //def apply[T](scope: => T): M[T] = ???
 }
-
+object debugMacro{
+  def apply[T](tree: T): T = macro FlowMacros.debugMacro
+}
+/*
 class flow[M[_]] extends Comprehension[M]{
   @compileTimeOnly("")
-  def apply[T](comprehension: M[FlowContext] => T): M[T] = ???
+  def apply[T](comprehension: MonadContext[M] => T): M[T] = ???
   //def apply[T](scope: => T): M[T] = ???
 }
+*/
 
 import scala.reflect.macros.blackbox
 class FlowMacros(val c: blackbox.Context){
@@ -124,6 +133,8 @@ class FlowMacros(val c: blackbox.Context){
       val t = tree match {
         case q"$mods val $name : $ttree = $_" if ttree.symbol == weakTypeOf[FlowContext].typeSymbol =>
           q"$mods val $name : ${TypeTree()}"
+        case q"$lhsT[..$ttrees](...$argsT)" if ttrees.map(_.symbol).contains( weakTypeOf[FlowContext].typeSymbol ) =>
+          q"$lhsT(...$argsT)"
         case q"$lhsT.$rhsT[..$ttrees](...$argsT)" if ttrees.map(_.symbol).contains( weakTypeOf[FlowContext].typeSymbol ) =>
           q"$lhsT.$rhsT(...$argsT)"
         case other => other
@@ -132,11 +143,38 @@ class FlowMacros(val c: blackbox.Context){
     }
   }
 
+  /** like identity but prints desugared code and tree */
+  def debugMacro(tree: Tree): Tree = {
+    println("code:\n  "+tree)
+    println("Tree:\n  "+showRaw(tree))
+    tree
+  }
   def sequence[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
     comprehension match {
-      case q"($context) => $e" =>
+      case q"($flowContext) => $e" =>
         val companion = weakTypeOf[M].typeSymbol.companion
         def unit(tree: Tree) = q"$companion.apply($tree)" // FIXME: this isn't great for Futures, is it?
+
+        def transformExtract(tree: Tree): (List[Tree], Tree) = {
+          object transformer extends Transformer {
+            val extracted = collection.mutable.MutableList[Tree]()
+            override def transform(tree: Tree) = {
+              val t = tree match {
+                case t2@q"org.cvogt.flow.`package`.Embed[$m,$tpe]($expr).unary_~" => 
+                  val name = c.freshName
+                  val (statements, texpr) = transformExtract(expr)
+                  val v = q"val ${TermName(name)}: $tpe = org.cvogt.flow.`package`.Embed[$m,$tpe]($texpr).unary_~"
+                  extracted ++= (statements :+ v)
+                  q"${Ident(TermName(name))}"
+
+                case other => other
+              }
+              super.transform(t)
+            }
+          }
+          val res = transformer.transform(tree)
+          (transformer.extracted.to[List], res)
+        }
 
         // untypechecking only seems to work reliably upfront.
         // As a consequence, all of the following processes pairs of
@@ -147,7 +185,7 @@ class FlowMacros(val c: blackbox.Context){
         // trees.
         // value names ending in T mean typed trees from here on.
         // The same names excluding the T mean the corresponding untyped trees
-        (e, RemoveFlowContextTypeAnnotations.transform(c.untypecheck(e))) match {
+        (e, c.untypecheck(e)) match {
           case (
             q"""..$statementsT; $resultT""", // <- 
             q"""..$statements;  $result """  // <- 
@@ -169,35 +207,64 @@ class FlowMacros(val c: blackbox.Context){
               case (
                 ( scope, context ),
                 (
-                  valdefT @ q"val $nameT: $tpeT = ~$eT($mT)", // FIXME, we need to check that $e is Embed
-                  valdef  @ q"val $name : $tpe  = ~$e ($m )"
+                  valdefT @ q"val $nameT: $tpeT = ~org.cvogt.flow.`package`.Embed[..$tT]($mT)",
+                  valdef  @ q"val $name : $tpe  = ~org.cvogt.flow.`package`.Embed[..$t]($m )"
                 )
               ) =>
-                val param = q"val $name: $tpe"
+                val param = q"val $name: ${TypeTree()}"
                 (
                   (name, tpeT) :: scope,
                   continue => context(q"$m.flatMap( $param => $continue )")
                 )
-              case ( ( scope, context ), (transformerT, transformer) ) if weakTypeOf[M].typeSymbol == transformerT.tpe.typeSymbol => // FIXME TypeSymbol only checks the higher-kinded type, but needs to also check the FlowContext type argument
-                // applies the transformations to `leaf` instead of the magical context handle
-                def refocus(tT: Tree, t: Tree, leaf: Tree): Tree = (tT,t) match {
-                  case (x@Ident(_),_) if weakTypeOf[M].typeSymbol == tT.tpe.typeSymbol => leaf
-                  case ( q"$lhsT.$rhsT", q"$lhs.$rhs" ) => q"${refocus(lhsT,lhs,leaf)}.$rhs"
-                  case ( q"$lhsT.$rhsT[..$tt](...$argsT)", q"$lhs.$rhs[..$t](...$args)" ) => q"${refocus(lhsT,lhs,leaf)}.$rhs(...$args)"
-                }
+              case ( ( scope, context ), (q"$ctxT.apply($transformerT)", q"$ctx.apply($transformer)") ) if ctx.symbol == flowContext.symbol =>
+                val boundNames = scope.map(_._1).map(Ident.apply _)
 
+                object ReplaceFlowScope extends Transformer {
+                  override def transform(tree: Tree) = {
+                    val t = tree match {
+                      case t@q"org.cvogt.flow.`package`.enableFlowScope[..$t2]($expr)" =>
+                        val pattern =  pq"(..${scope.map(_._1)})"
+                        // FIXME: can we move the extractor below into the argument?
+                        q"""{
+                          arg =>
+                            val $pattern = arg
+                            ${transform(expr)}
+                        }"""
+                      case other => other
+                    }
+                    super.transform(t)
+                  }
+                }
                 val captured = context{
-                  val values = scope.map(_._1).map(Ident.apply _)
-                  unit(q"(..$values)")
+                  unit(q"(..$boundNames)")
                 }
                 val params = scope.map{ case(name, tpe) => ValDef(Modifiers(Flag.PARAM),name,tpe,EmptyTree) }
-                /// FIXME: use fresh name instead of lll
-                (scope, continue => q"""
-                  val lll = ${refocus(transformerT, transformer, captured)}
-                  lll.flatMap{
-                    ((..$params) => $continue).tupled
+                
+                val closed =  ReplaceFlowScope.transform(
+                  transformer match {
+                    case q"($arg) => $expr" => 
+                      val q"$_ val $name: $_ = $_" = arg
+                      q"""
+                        val $name = $captured
+                        $expr
+                      """
+                    case q"$other" => q"$other($captured)"
                   }
-                """)
+                )
+                (scope, continue => {
+                  val func =
+                    if(params.size > 1)
+                      q"((..$params) => $continue).tupled"
+                    else
+                      q"((..$params) => $continue)"
+                  val name = c.freshName
+                  q"""
+                    val ${TermName(name)} = $closed
+                    ${Ident(TermName(name))}.flatMap{
+                      $func            
+                    }
+                  """
+                })
               case (
                 ( scope, context ),
                 (
@@ -213,8 +280,9 @@ class FlowMacros(val c: blackbox.Context){
                 (scope, continue => context(q"$other; $continue"))
             }
             val res = continuation(unit(q"$result"))
+            //println(e)
             //println(res)
-            res
+            RemoveFlowContextTypeAnnotations.transform(res)
         }
       case x => throw new Exception(x.toString)
     }

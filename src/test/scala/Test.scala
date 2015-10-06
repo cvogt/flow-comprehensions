@@ -64,9 +64,31 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
       List(8,6,4,3) == sequence[List]{ c =>
         val l1 = ~List(1,2)
         val l2 = ~List(3,4)
-        val unrelated = 1
-        c.reverse
-        l1 * l2 * unrelated
+        c(_.reverse)
+        l1 * l2
+      }
+    )
+
+    assert(
+      List(3,4,6,8) == sequence[List]{ c =>
+        val l1 = ~List(1,2)
+        val l2 = ~List(3,4)
+        c(_.reverse)
+        c(_.reverse)
+        l1 * l2
+      }
+    )
+
+    assert(
+      List(32,24,8,6) == sequence[List]{ c =>
+        val l1 = ~List(1,2)
+        val l2 = ~List(3,4)
+        val unrelated = 2
+        def foo(i: Int) = i
+        val unrelated2 = foo(l1)
+        c(_.reverse)
+        // foo(l1) // does not compile
+        l1 * l2 * unrelated * unrelated2
       }
     )
 
@@ -84,7 +106,7 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
         val l1 = ~List(1,2)
         val l2 = ~List(3,4)
         val l3 = ~List(5,6)
-        c.reverse
+        c(_.reverse)
         l3 * l1 * l2
       }
     )
@@ -93,7 +115,32 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
       List(40,48,30,36,20,24,15,18) == sequence[List]{ c =>
         val l1 = ~List(1,2)
         val l2 = ~List(3,4)
-        c.reverse
+        c(_.reverse)
+        val l3 = ~List(5,6)
+        l3 * l1 * l2
+      }
+    )
+
+    def reverse[T] = (_:List[T]).reverse
+
+    assert(
+      List(40,48,30,36,20,24,15,18) == sequence[List]{ c =>
+        val l1 = ~List(1,2)
+        val l2 = ~List(3,4)
+        c(reverse)
+        val l3 = ~List(5,6)
+        l3 * l1 * l2
+      }
+    )
+
+    implicit class IntListExtensions[T](l: List[T]){
+      def reverse2 = l.reverse
+    }
+    assert(
+      List(40,48,30,36,20,24,15,18) == sequence[List]{ c =>
+        val l1 = ~List(1,2)
+        val l2 = ~List(3,4)
+        c(_.reverse2)
         val l3 = ~List(5,6)
         l3 * l1 * l2
       }
@@ -104,8 +151,17 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
         val l1 = ~List(1,2)
         val l2 = ~List(3,4)
         val l3 = ~List(5,6)
-        c.map(identity)
+        c(_.map(identity))
         l3 * l1 * l2
+      }
+    )
+
+    assert(
+      List(4,3,8,6) == sequence[List]{ c =>
+        val l1 = ~List(2,1)
+        c(_.sortBy(l1))
+        val l2 = ~List(4,3)
+        l1 * l2
       }
     )
 
