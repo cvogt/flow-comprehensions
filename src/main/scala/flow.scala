@@ -201,7 +201,17 @@ class FlowMacros(val c: blackbox.Context){
              * a val for example, in order to call contextual transformers
              * (sortBy, filter, ...) on the iteration up to this point.
             */
-            val (_, continuation) = (statementsT zip statements).foldLeft(
+
+            val (additionalStatementsT, expressionT) = transformExtract(resultT)
+            val (additionalStatements, expression) = transformExtract(result)
+
+            val statementPairs = (
+              (statementsT.flatMap(transformExtract(_) match{ case (list,one) => list :+ one }) ++ additionalStatementsT)
+              zip
+              (statements.flatMap(transformExtract(_) match{ case (list,one) => list :+ one }) ++ additionalStatements)
+            )
+
+            val (_, continuation) = statementPairs.foldLeft(
               ( List[(TermName,Tree)](), identity[Tree] _ )
             ){
               case (
@@ -213,7 +223,8 @@ class FlowMacros(val c: blackbox.Context){
               ) =>
                 val param = q"val $name: ${TypeTree()}"
                 (
-                  (name, tpeT) :: scope,
+                  // omit generated aliases from being captured - users can't refer to them anyways
+                  if(name.toString.startsWith("fresh$macro$")) scope else ((name, tpeT) :: scope),
                   continue => context(q"$m.flatMap( $param => $continue )")
                 )
               case ( ( scope, context ), (q"$ctxT.apply($transformerT)", q"$ctx.apply($transformer)") ) if ctx.symbol == flowContext.symbol =>
@@ -279,7 +290,7 @@ class FlowMacros(val c: blackbox.Context){
               case ( ( scope, context ), (otherT, other) ) => 
                 (scope, continue => context(q"$other; $continue"))
             }
-            val res = continuation(unit(q"$result"))
+            val res = continuation(unit(expression))
             //println(e)
             //println(res)
             RemoveFlowContextTypeAnnotations.transform(res)

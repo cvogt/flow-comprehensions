@@ -165,6 +165,12 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
       }
     )
 
+    assert(
+      List(4,3,8,6) == sequence[List]{ c =>
+        ~List(1,2) * ~List(4,3)
+      }
+    )
+
 /*
     assert(
       List(6,8) == sequence[List]{ c =>
