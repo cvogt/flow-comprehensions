@@ -8,11 +8,35 @@ import scala.language.experimental.macros
 @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
 final class FlowContext private()
 
+abstract class Constructor[H[_]]{
+  def create[T](v: T): H[T]
+}
+
 object `package`{
   //@compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
   // We can't make this implicit because then it is used whenever something does not have an apply
   // which leads to weird error messages, e.g. Baz.apply(5) Expected FlowContext Found Int
   //implicit def enableFlowScope[T](t: T): FlowContext => T = ???
+
+  implicit object OptionConstructor extends Constructor[Option]{
+    def create[T](v: T) = Some(v)
+  }
+  import scala.concurrent._
+  implicit def FutureConstructor: Constructor[Future] = new Constructor[Future]{
+    def create[T](v: T) = Future.successful(v)
+  }
+  import collection.generic.CanBuildFrom
+  /** Generic Constructor for anything that has a CanBuildFrom.*/
+  implicit def CanBuildFromConstructor[M[_]](implicit cbf: CanBuildFrom[_, AnyRef, M[AnyRef]]) = new Constructor[M]{
+    // Requires some cheating on the type-level. Assuming it's sound in relevant cases due to lack of counter examples.
+    // Worst case, we have to replace this with manual instances for all important types.
+    // That would probably also be more performant because of fewer allocations.
+    def create[T](v: T) = {
+      val b = cbf.asInstanceOf[ CanBuildFrom[_, T, M[T]] ]()
+      b += v
+      b.result
+    }
+  }
 
   //@compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
   //implicit def unpackFlowContextMonad[M[_],T](t: T): M[FlowContext] => T = ???
@@ -157,8 +181,9 @@ class FlowMacros(val c: blackbox.Context){
   def sequence[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
     comprehension match {
       case q"($flowContext) => $e" =>
-        val companion = weakTypeOf[M].typeSymbol.companion
-        def unit(tree: Tree) = q"$companion.apply($tree)" // FIXME: this isn't great for Futures, is it?
+        val M = weakTypeOf[M]
+        val companion = M.typeSymbol.companion
+        def unit(tree: Tree) = q"implicitly[Constructor[$M]].create($tree)"
 
         def transformExtract(tree: Tree): (List[Tree], Tree) = {
           object transformer extends Transformer {
@@ -299,6 +324,7 @@ class FlowMacros(val c: blackbox.Context){
             val res = continuation(unit(expression))
             //println(e)
             //println(res)
+            //println(showRaw(res))
             RemoveFlowContextTypeAnnotations.transform(res)
         }
       case x => throw new Exception(x.toString)

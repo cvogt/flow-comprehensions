@@ -22,8 +22,8 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
       }
     )
     assert(
-      Option(5) == sequence[Option]{ c =>
-        val o = c(Option(5))
+      Set(5) == sequence[Set]{ c =>
+        val o = c(Set(5))
         o
       }
     )
@@ -168,8 +168,8 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
     )
 
     assert(
-      List(4,3,8,6) == sequence[List]{ c =>
-        c(List(1,2)) * c(List(4,3))
+      Seq(4,3,8,6) == sequence[Seq]{ c =>
+        c(Seq(1,2)) * c(Seq(4,3))
       }
     )
 
