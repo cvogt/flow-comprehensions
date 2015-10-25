@@ -9,8 +9,11 @@ import scala.language.experimental.macros
 final class FlowContext private()
 
 object `package`{
-  @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
-  implicit def enableFlowScope[T](t: T): FlowContext => T = ???
+  //@compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
+  // We can't make this implicit because then it is used whenever something does not have an apply
+  // which leads to weird error messages, e.g. Baz.apply(5) Expected FlowContext Found Int
+  //implicit def enableFlowScope[T](t: T): FlowContext => T = ???
+
   //@compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
   //implicit def unpackFlowContextMonad[M[_],T](t: T): M[FlowContext] => T = ???
 
@@ -233,7 +236,7 @@ class FlowMacros(val c: blackbox.Context){
                 object ReplaceFlowScope extends Transformer {
                   override def transform(tree: Tree) = {
                     val t = tree match {
-                      case t@q"org.cvogt.flow.`package`.enableFlowScope[..$t2]($expr)" =>
+                      case t@q"($arg) => $expr" if arg.tpt.tpe != null && arg.tpt.tpe =:= typeOf[FlowContext] =>
                         val pattern =  pq"(..${scope.map(_._1)})"
                         // FIXME: can we move the extractor below into the argument?
                         q"""{
@@ -250,18 +253,18 @@ class FlowMacros(val c: blackbox.Context){
                   unit(q"(..$boundNames)")
                 }
                 val params = scope.map{ case(name, tpe) => ValDef(Modifiers(Flag.PARAM),name,tpe,EmptyTree) }
-                
-                val closed =  ReplaceFlowScope.transform(
-                  transformer match {
-                    case q"($arg) => $expr" => 
-                      val q"$_ val $name: $_ = $_" = arg
-                      q"""
-                        val $name = $captured
-                        $expr
-                      """
-                    case q"$other" => q"$other($captured)"
-                  }
-                )
+                val before = transformer match {
+                  case q"($arg) => $expr" => 
+                    val q"$_ val $name: $_ = $_" = arg
+                    q"""
+                      val $name = $captured
+                      $expr
+                    """
+                  case q"$other" => q"$other($captured)"
+                }
+                //println("before:"+before)
+                val closed =  ReplaceFlowScope.transform(before)
+                //println("closed:"+closed)
                 (scope, continue => {
                   val func =
                     if(params.size > 1)
