@@ -107,7 +107,9 @@ sealed abstract class Comprehension[M[_]]{ // FIXME: what happens if calling a m
 }
 final class MonadContext[M[_]]{
   @compileTimeOnly("The MonadContext type only makes sense in a flow comprehension scope and is supposed to be removed by the macro.")
-  def apply(transform: M[FlowContext] => M[FlowContext]) = ???
+  def !(transform: M[FlowContext] => M[FlowContext]) = ???
+  @compileTimeOnly("The MonadContext type only makes sense in a flow comprehension scope and is supposed to be removed by the macro.")
+  def apply[T](extract: M[T]): T = ???
 }
 class sequence[M[_]] extends Comprehension[M]{
   def apply[T](comprehension: MonadContext[M] => T): M[T] = macro FlowMacros.sequence[M[_],T]
@@ -163,10 +165,10 @@ class FlowMacros(val c: blackbox.Context){
             val extracted = collection.mutable.MutableList[Tree]()
             override def transform(tree: Tree) = {
               val t = tree match {
-                case t2@q"org.cvogt.flow.`package`.Embed[$m,$tpe]($expr).unary_~" => 
+                case t2@q"$flowContextUsage.apply[$tpe]($expr)" if flowContextUsage.symbol == flowContext.symbol => 
                   val name = c.freshName
                   val (statements, texpr) = transformExtract(expr)
-                  val v = q"val ${TermName(name)}: $tpe = org.cvogt.flow.`package`.Embed[$m,$tpe]($texpr).unary_~"
+                  val v = q"val ${TermName(name)}: $tpe = $flowContextUsage.apply[$tpe]($texpr)"
                   extracted ++= (statements :+ v)
                   q"${Ident(TermName(name))}"
 
@@ -220,17 +222,18 @@ class FlowMacros(val c: blackbox.Context){
               case (
                 ( scope, context ),
                 (
-                  valdefT @ q"val $nameT: $tpeT = ~org.cvogt.flow.`package`.Embed[..$tT]($mT)",
-                  valdef  @ q"val $name : $tpe  = ~org.cvogt.flow.`package`.Embed[..$t]($m )"
+                  valdefT @ q"val $nameT: $tpeT = $flowContextUsage.apply[$t]($mT)",
+                  valdef  @ q"val $name : $tpe  = $flowContextUsageT.apply[$tT]($m )"
                 )
-              ) =>
+              )  if flowContextUsage.symbol == flowContext.symbol && flowContextUsageT.symbol == flowContext.symbol
+               =>
                 val param = q"val $name: ${TypeTree()}"
                 (
                   // omit generated aliases from being captured - users can't refer to them anyways
                   if(name.toString.startsWith("fresh$macro$")) scope else ((name, tpeT) :: scope),
                   continue => context(q"$m.flatMap( $param => $continue )")
                 )
-              case ( ( scope, context ), (q"$ctxT.apply($transformerT)", q"$ctx.apply($transformer)") ) if ctx.symbol == flowContext.symbol =>
+              case ( ( scope, context ), (q"$ctxT.!($transformerT)", q"$ctx.!($transformer)") ) if ctx.symbol == flowContext.symbol =>
                 val boundNames = scope.map(_._1).map(Ident.apply _)
 
                 object ReplaceFlowScope extends Transformer {
