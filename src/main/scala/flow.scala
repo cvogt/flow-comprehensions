@@ -8,9 +8,36 @@ import scala.language.experimental.macros
 @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
 final class FlowContext private()
 
+abstract class Constructor[H[_]]{
+  def create[T](v: T): H[T]
+}
+
 object `package`{
-  @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
-  implicit def enableFlowScope[T](t: T): FlowContext => T = ???
+  //@compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
+  // We can't make this implicit because then it is used whenever something does not have an apply
+  // which leads to weird error messages, e.g. Baz.apply(5) Expected FlowContext Found Int
+  //implicit def enableFlowScope[T](t: T): FlowContext => T = ???
+
+  implicit object OptionConstructor extends Constructor[Option]{
+    def create[T](v: T) = Some(v)
+  }
+  import scala.concurrent._
+  implicit def FutureConstructor: Constructor[Future] = new Constructor[Future]{
+    def create[T](v: T) = Future.successful(v)
+  }
+  import collection.generic.CanBuildFrom
+  /** Generic Constructor for anything that has a CanBuildFrom.*/
+  implicit def CanBuildFromConstructor[M[_]](implicit cbf: CanBuildFrom[_, AnyRef, M[AnyRef]]) = new Constructor[M]{
+    // Requires some cheating on the type-level. Assuming it's sound in relevant cases due to lack of counter examples.
+    // Worst case, we have to replace this with manual instances for all important types.
+    // That would probably also be more performant because of fewer allocations.
+    def create[T](v: T) = {
+      val b = cbf.asInstanceOf[ CanBuildFrom[_, T, M[T]] ]()
+      b += v
+      b.result
+    }
+  }
+
   //@compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
   //implicit def unpackFlowContextMonad[M[_],T](t: T): M[FlowContext] => T = ???
 
@@ -26,10 +53,10 @@ object `package`{
     
     Analog to .value in sbt and await in scala-async
 
-    Alternative name candidates or potential aliases: value, ~, &, embed, flow, in, enter, open, dive, each
+    Alternative name candidates or potential aliases: value, ~, ?, &, embed, flow, in, enter, open, dive, each
 
-    sequence{
-      val x = ~xs
+    flat[M]{ c =>
+      val x = c?xs
       ,,,
     }
 
@@ -41,13 +68,13 @@ object `package`{
     } yield ...
 
     */
-    @compileTimeOnly("the prefix ~ operator can only be used in a flow comprehension scope such as sequence{...}, flow{...}")
-    def unary_~ : T = ???
+    @compileTimeOnly("the prefix ? operator can only be used in a flow comprehension scope such as flat{...}, flow{...}")
+    def unary_? : T = ???
   }
   /*
   implicit class Embed2[M[_],K[_],T](m: K[M[T]]){
-    //@compileTimeOnly("the prefix ~ operator can only be used in a flow comprehension scope such as sequence{...}, flow{...}")
-    def unary_~ : T = ???
+    //@compileTimeOnly("the prefix ? operator can only be used in a flow comprehension scope such as flat{...}, flow{...}")
+    def unary_? : T = ???
   }
   */
 
@@ -59,10 +86,10 @@ object `package`{
   Works sequentially, meaning in
 
   <code>
-  sequence[Future]{
-    val a = ~Future(now)
+  flat[Future]{ c =>
+    val a = c?Future(now)
     val b = now
-    val c = ~Future(now)
+    val c = c?Future(now)
     (a,b,c)
   }
   </code>
@@ -70,7 +97,8 @@ object `package`{
   a < b < c
 
   */
-  def sequence[M[_]] = new sequence[M]
+  def flat[M[_]] = new flat[M]
+  /*
   // FIXME: Concerns: changing data flow could be unexpected to readers of the code. How can we ease that?
 
   /**
@@ -81,10 +109,10 @@ object `package`{
   Works non-sequentially, meaning in
 
   <code>
-  flow[Future]{
-    val a = ~Future(now)
+  flat[Future]{ c =>
+    val a = c?Future(now)
     val b = now
-    val c = ~Future(now)
+    val c = c?Future(now)
     (a,b,c)
   }
   </code>
@@ -95,7 +123,7 @@ object `package`{
   */
   class flow[M[_]]
   def flow[M[_]] = new flow[M]
-
+  */
 }
 
 sealed abstract class Comprehension[M[_]]{ // FIXME: what happens if calling a method on this type that is implemented by macros in children? no such method error?
@@ -103,11 +131,15 @@ sealed abstract class Comprehension[M[_]]{ // FIXME: what happens if calling a m
   //def apply[T](scope: => T): M[T]
 }
 final class MonadContext[M[_]]{
+  /** transform the surrounding monad at this point */
   @compileTimeOnly("The MonadContext type only makes sense in a flow comprehension scope and is supposed to be removed by the macro.")
-  def apply(transform: M[FlowContext] => M[FlowContext]) = ???
+  def !(transform: M[FlowContext] => M[FlowContext]) = ???
+  /** extract a value from a given Monad */
+  @compileTimeOnly("The MonadContext type only makes sense in a flow comprehension scope and is supposed to be removed by the macro.")
+  def ?[T](monad: M[T]): T = ???
 }
-class sequence[M[_]] extends Comprehension[M]{
-  def apply[T](comprehension: MonadContext[M] => T): M[T] = macro FlowMacros.sequence[M[_],T]
+class flat[M[_]] extends Comprehension[M]{
+  def apply[T](comprehension: MonadContext[M] => T): M[T] = macro FlowMacros.flat[M[_],T]
   //def apply[T](scope: => T): M[T] = ???
 }
 object debugMacro{
@@ -149,21 +181,22 @@ class FlowMacros(val c: blackbox.Context){
     println("Tree:\n  "+showRaw(tree))
     tree
   }
-  def sequence[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
+  def flat[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
     comprehension match {
       case q"($flowContext) => $e" =>
-        val companion = weakTypeOf[M].typeSymbol.companion
-        def unit(tree: Tree) = q"$companion.apply($tree)" // FIXME: this isn't great for Futures, is it?
+        val M = weakTypeOf[M]
+        val companion = M.typeSymbol.companion
+        def unit(tree: Tree) = q"implicitly[Constructor[$M]].create($tree)"
 
         def transformExtract(tree: Tree): (List[Tree], Tree) = {
           object transformer extends Transformer {
             val extracted = collection.mutable.MutableList[Tree]()
             override def transform(tree: Tree) = {
               val t = tree match {
-                case t2@q"org.cvogt.flow.`package`.Embed[$m,$tpe]($expr).unary_~" => 
+                case t2@q"$flowContextUsage.?[$tpe]($expr)" if flowContextUsage.symbol == flowContext.symbol => 
                   val name = c.freshName
                   val (statements, texpr) = transformExtract(expr)
-                  val v = q"val ${TermName(name)}: $tpe = org.cvogt.flow.`package`.Embed[$m,$tpe]($texpr).unary_~"
+                  val v = q"val ${TermName(name)}: $tpe = $flowContextUsage.?[$tpe]($texpr)"
                   extracted ++= (statements :+ v)
                   q"${Ident(TermName(name))}"
 
@@ -195,7 +228,7 @@ class FlowMacros(val c: blackbox.Context){
              * comprehension at this point) and a context, which is a function that takes
              * a tree and embeds it into another tree that binds the required
              * values. The context is effectively a continuation, which allows
-             * folding forward throw the sequence of statements while allowing
+             * folding forward throw the flat of statements while allowing
              * the following statment decide how it handles the continuation of previous
              * statments. This allows closing the iteration and assigning the result to
              * a val for example, in order to call contextual transformers
@@ -217,23 +250,24 @@ class FlowMacros(val c: blackbox.Context){
               case (
                 ( scope, context ),
                 (
-                  valdefT @ q"val $nameT: $tpeT = ~org.cvogt.flow.`package`.Embed[..$tT]($mT)",
-                  valdef  @ q"val $name : $tpe  = ~org.cvogt.flow.`package`.Embed[..$t]($m )"
+                  valdefT @ q"val $nameT: $tpeT = $flowContextUsage.?[$t]($mT)",
+                  valdef  @ q"val $name : $tpe  = $flowContextUsageT.?[$tT]($m )"
                 )
-              ) =>
+              )  if flowContextUsage.symbol == flowContext.symbol && flowContextUsageT.symbol == flowContext.symbol
+               =>
                 val param = q"val $name: ${TypeTree()}"
                 (
                   // omit generated aliases from being captured - users can't refer to them anyways
                   if(name.toString.startsWith("fresh$macro$")) scope else ((name, tpeT) :: scope),
                   continue => context(q"$m.flatMap( $param => $continue )")
                 )
-              case ( ( scope, context ), (q"$ctxT.apply($transformerT)", q"$ctx.apply($transformer)") ) if ctx.symbol == flowContext.symbol =>
+              case ( ( scope, context ), (q"$ctxT.!($transformerT)", q"$ctx.!($transformer)") ) if ctx.symbol == flowContext.symbol =>
                 val boundNames = scope.map(_._1).map(Ident.apply _)
 
                 object ReplaceFlowScope extends Transformer {
                   override def transform(tree: Tree) = {
                     val t = tree match {
-                      case t@q"org.cvogt.flow.`package`.enableFlowScope[..$t2]($expr)" =>
+                      case t@q"($arg) => $expr" if arg.tpt.tpe != null && arg.tpt.tpe =:= typeOf[FlowContext] =>
                         val pattern =  pq"(..${scope.map(_._1)})"
                         // FIXME: can we move the extractor below into the argument?
                         q"""{
@@ -250,18 +284,18 @@ class FlowMacros(val c: blackbox.Context){
                   unit(q"(..$boundNames)")
                 }
                 val params = scope.map{ case(name, tpe) => ValDef(Modifiers(Flag.PARAM),name,tpe,EmptyTree) }
-                
-                val closed =  ReplaceFlowScope.transform(
-                  transformer match {
-                    case q"($arg) => $expr" => 
-                      val q"$_ val $name: $_ = $_" = arg
-                      q"""
-                        val $name = $captured
-                        $expr
-                      """
-                    case q"$other" => q"$other($captured)"
-                  }
-                )
+                val before = transformer match {
+                  case q"($arg) => $expr" => 
+                    val q"$_ val $name: $_ = $_" = arg
+                    q"""
+                      val $name = $captured
+                      $expr
+                    """
+                  case q"$other" => q"$other($captured)"
+                }
+                //println("before:"+before)
+                val closed =  ReplaceFlowScope.transform(before)
+                //println("closed:"+closed)
                 (scope, continue => {
                   val func =
                     if(params.size > 1)
@@ -293,6 +327,7 @@ class FlowMacros(val c: blackbox.Context){
             val res = continuation(unit(expression))
             //println(e)
             //println(res)
+            //println(showRaw(res))
             RemoveFlowContextTypeAnnotations.transform(res)
         }
       case x => throw new Exception(x.toString)
