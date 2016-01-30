@@ -53,10 +53,10 @@ object `package`{
     
     Analog to .value in sbt and await in scala-async
 
-    Alternative name candidates or potential aliases: value, ~, &, embed, flow, in, enter, open, dive, each
+    Alternative name candidates or potential aliases: value, ~, ?, &, embed, flow, in, enter, open, dive, each
 
-    sequence{
-      val x = ~xs
+    sequence[M]{ c =>
+      val x = c?xs
       ,,,
     }
 
@@ -68,13 +68,13 @@ object `package`{
     } yield ...
 
     */
-    @compileTimeOnly("the prefix ~ operator can only be used in a flow comprehension scope such as sequence{...}, flow{...}")
-    def unary_~ : T = ???
+    @compileTimeOnly("the prefix ? operator can only be used in a flow comprehension scope such as sequence{...}, flow{...}")
+    def unary_? : T = ???
   }
   /*
   implicit class Embed2[M[_],K[_],T](m: K[M[T]]){
-    //@compileTimeOnly("the prefix ~ operator can only be used in a flow comprehension scope such as sequence{...}, flow{...}")
-    def unary_~ : T = ???
+    //@compileTimeOnly("the prefix ? operator can only be used in a flow comprehension scope such as sequence{...}, flow{...}")
+    def unary_? : T = ???
   }
   */
 
@@ -86,10 +86,10 @@ object `package`{
   Works sequentially, meaning in
 
   <code>
-  sequence[Future]{
-    val a = ~Future(now)
+  sequence[Future]{ c =>
+    val a = c?Future(now)
     val b = now
-    val c = ~Future(now)
+    val c = c?Future(now)
     (a,b,c)
   }
   </code>
@@ -108,10 +108,10 @@ object `package`{
   Works non-sequentially, meaning in
 
   <code>
-  flow[Future]{
-    val a = ~Future(now)
+  sequence[Future]{ c =>
+    val a = c?Future(now)
     val b = now
-    val c = ~Future(now)
+    val c = c?Future(now)
     (a,b,c)
   }
   </code>
@@ -130,10 +130,12 @@ sealed abstract class Comprehension[M[_]]{ // FIXME: what happens if calling a m
   //def apply[T](scope: => T): M[T]
 }
 final class MonadContext[M[_]]{
+  /** transform the surrounding monad at this point */
   @compileTimeOnly("The MonadContext type only makes sense in a flow comprehension scope and is supposed to be removed by the macro.")
   def !(transform: M[FlowContext] => M[FlowContext]) = ???
+  /** extract a value from a given Monad */
   @compileTimeOnly("The MonadContext type only makes sense in a flow comprehension scope and is supposed to be removed by the macro.")
-  def apply[T](extract: M[T]): T = ???
+  def ?[T](monad: M[T]): T = ???
 }
 class sequence[M[_]] extends Comprehension[M]{
   def apply[T](comprehension: MonadContext[M] => T): M[T] = macro FlowMacros.sequence[M[_],T]
@@ -190,10 +192,10 @@ class FlowMacros(val c: blackbox.Context){
             val extracted = collection.mutable.MutableList[Tree]()
             override def transform(tree: Tree) = {
               val t = tree match {
-                case t2@q"$flowContextUsage.apply[$tpe]($expr)" if flowContextUsage.symbol == flowContext.symbol => 
+                case t2@q"$flowContextUsage.?[$tpe]($expr)" if flowContextUsage.symbol == flowContext.symbol => 
                   val name = c.freshName
                   val (statements, texpr) = transformExtract(expr)
-                  val v = q"val ${TermName(name)}: $tpe = $flowContextUsage.apply[$tpe]($texpr)"
+                  val v = q"val ${TermName(name)}: $tpe = $flowContextUsage.?[$tpe]($texpr)"
                   extracted ++= (statements :+ v)
                   q"${Ident(TermName(name))}"
 
@@ -247,8 +249,8 @@ class FlowMacros(val c: blackbox.Context){
               case (
                 ( scope, context ),
                 (
-                  valdefT @ q"val $nameT: $tpeT = $flowContextUsage.apply[$t]($mT)",
-                  valdef  @ q"val $name : $tpe  = $flowContextUsageT.apply[$tT]($m )"
+                  valdefT @ q"val $nameT: $tpeT = $flowContextUsage.?[$t]($mT)",
+                  valdef  @ q"val $name : $tpe  = $flowContextUsageT.?[$tT]($m )"
                 )
               )  if flowContextUsage.symbol == flowContext.symbol && flowContextUsageT.symbol == flowContext.symbol
                =>
