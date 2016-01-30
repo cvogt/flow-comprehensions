@@ -55,7 +55,7 @@ object `package`{
 
     Alternative name candidates or potential aliases: value, ~, ?, &, embed, flow, in, enter, open, dive, each
 
-    sequence[M]{ c =>
+    flat[M]{ c =>
       val x = c?xs
       ,,,
     }
@@ -68,12 +68,12 @@ object `package`{
     } yield ...
 
     */
-    @compileTimeOnly("the prefix ? operator can only be used in a flow comprehension scope such as sequence{...}, flow{...}")
+    @compileTimeOnly("the prefix ? operator can only be used in a flow comprehension scope such as flat{...}, flow{...}")
     def unary_? : T = ???
   }
   /*
   implicit class Embed2[M[_],K[_],T](m: K[M[T]]){
-    //@compileTimeOnly("the prefix ? operator can only be used in a flow comprehension scope such as sequence{...}, flow{...}")
+    //@compileTimeOnly("the prefix ? operator can only be used in a flow comprehension scope such as flat{...}, flow{...}")
     def unary_? : T = ???
   }
   */
@@ -86,7 +86,7 @@ object `package`{
   Works sequentially, meaning in
 
   <code>
-  sequence[Future]{ c =>
+  flat[Future]{ c =>
     val a = c?Future(now)
     val b = now
     val c = c?Future(now)
@@ -97,7 +97,8 @@ object `package`{
   a < b < c
 
   */
-  def sequence[M[_]] = new sequence[M]
+  def flat[M[_]] = new flat[M]
+  /*
   // FIXME: Concerns: changing data flow could be unexpected to readers of the code. How can we ease that?
 
   /**
@@ -108,7 +109,7 @@ object `package`{
   Works non-sequentially, meaning in
 
   <code>
-  sequence[Future]{ c =>
+  flat[Future]{ c =>
     val a = c?Future(now)
     val b = now
     val c = c?Future(now)
@@ -122,7 +123,7 @@ object `package`{
   */
   class flow[M[_]]
   def flow[M[_]] = new flow[M]
-
+  */
 }
 
 sealed abstract class Comprehension[M[_]]{ // FIXME: what happens if calling a method on this type that is implemented by macros in children? no such method error?
@@ -137,8 +138,8 @@ final class MonadContext[M[_]]{
   @compileTimeOnly("The MonadContext type only makes sense in a flow comprehension scope and is supposed to be removed by the macro.")
   def ?[T](monad: M[T]): T = ???
 }
-class sequence[M[_]] extends Comprehension[M]{
-  def apply[T](comprehension: MonadContext[M] => T): M[T] = macro FlowMacros.sequence[M[_],T]
+class flat[M[_]] extends Comprehension[M]{
+  def apply[T](comprehension: MonadContext[M] => T): M[T] = macro FlowMacros.flat[M[_],T]
   //def apply[T](scope: => T): M[T] = ???
 }
 object debugMacro{
@@ -180,7 +181,7 @@ class FlowMacros(val c: blackbox.Context){
     println("Tree:\n  "+showRaw(tree))
     tree
   }
-  def sequence[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
+  def flat[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
     comprehension match {
       case q"($flowContext) => $e" =>
         val M = weakTypeOf[M]
@@ -227,7 +228,7 @@ class FlowMacros(val c: blackbox.Context){
              * comprehension at this point) and a context, which is a function that takes
              * a tree and embeds it into another tree that binds the required
              * values. The context is effectively a continuation, which allows
-             * folding forward throw the sequence of statements while allowing
+             * folding forward throw the flat of statements while allowing
              * the following statment decide how it handles the continuation of previous
              * statments. This allows closing the iteration and assigning the result to
              * a val for example, in order to call contextual transformers
