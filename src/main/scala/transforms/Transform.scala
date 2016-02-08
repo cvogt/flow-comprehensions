@@ -13,9 +13,5 @@ abstract class Transform {
   }
 
   def rewrites[C <: blackbox.Context](transformContext: TransformContext[C]): List[transformContext.Rewrite]
-  def rewriteReturned[C <: blackbox.Context](transformContext: TransformContext[C]): transformContext.Rewrite =
-    transformContext.Rewrite("leaving return value alone") { case t => transformContext.Accept }
-
-  def isTyped: Boolean
 
 }

@@ -4,7 +4,6 @@ package transforms
 import scala.reflect.macros.blackbox
 
 case object Normalize extends Transform {
-  override val isTyped = false
   override def rewrites[C <: blackbox.Context](transformContext: TransformContext[C]): List[transformContext.Rewrite] = {
     import transformContext._
     import macroContext.universe._

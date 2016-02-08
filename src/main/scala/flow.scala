@@ -46,6 +46,7 @@ object `package`{
 
   def flat[M[_]] = new flat[M]
   def transform[M[_]] = new transform[M]
+  def show(t: Any): Unit = macro FlowMacros.show
 }
 
 sealed abstract class Comprehension[M[_]] {
@@ -63,19 +64,18 @@ class flat[M[_]] extends Comprehension[M]{
 }
 class transform[M[_]] {
   def apply[T]
+    (returnName: String)
     (transforms: String*)
     (comprehension: MonadContext[M] => M[T]): M[T] =
       macro FlowMacros.transform[M[_]]
 }
 
 import scala.reflect.macros.blackbox
-trait Contextual {
-  val c: blackbox.Context
-}
 
-class FlowMacros(val c: blackbox.Context) extends Contextual {
+class FlowMacros(val c: blackbox.Context) {
   import c.universe._
   import c.weakTypeOf
+  import c.internal
 
   val debug =
     sys.props.get("flat_debug_transforms").getOrElse("").split(",").toSet
@@ -86,21 +86,24 @@ class FlowMacros(val c: blackbox.Context) extends Contextual {
       case _ => false
     }
 
+  val ownerFixer = new OwnerFixer[c.type](c)
+
   import org.cvogt.flow.transforms._
 
   val allTransforms = Seq(
+    ImplicitExtractions,
     Normalize,
     RewriteExtractions
   )
 
-  def transform[M: WeakTypeTag](transforms: Tree*)(comprehension: Tree): Tree = {
-
+  def transform[M: WeakTypeTag](returnName: Tree)(transforms: Tree*)(comprehension: Tree): Tree = {
     comprehension match {
-
       case q"($ctxNme: $tpe) => $body" =>
-
         val m = weakTypeOf[M].typeConstructor
-
+        val returnNme = returnName match {
+          case Literal(Constant(nme: String)) => TermName(nme)
+          case _ => c.abort(returnName.pos, "return name must be a String literal")
+        }
         transforms match {
           case Nil => body
           case (t@Literal(Constant(currentTransformName: String))) :: remainingTransformations =>
@@ -115,13 +118,14 @@ class FlowMacros(val c: blackbox.Context) extends Contextual {
             val ctx = new TransformContext[c.type](c) {
               val M: Type = m
               val contextName: TermName = ctxNme
+              val returnName = returnNme
               def recur(t: Tree): Tree = {
                 q"""
-                  _root_.org.cvorg.flow.transform[$m](..${transforms})(($ctxNme: _root_.org.cvogt.flow.MonadContext[$m]) => $t)
+                  _root_.org.cvorg.flow.transform[$m]($returnName)(..${transforms})(($ctxNme: _root_.org.cvogt.flow.MonadContext[$m]) => $t)
                 """
               }
             }
-            import ctx._
+            import ctx.{returnName=>_, _}
 
             allTransforms.find(_.name == currentTransformName) match {
               case Some(currentTransform) =>
@@ -181,7 +185,7 @@ class FlowMacros(val c: blackbox.Context) extends Contextual {
                               val input = traverse(Nil, t, step.sub)
                               val transformed = f(input)
                               val output = q"""
-                                  _root_.org.cvogt.flow.transform[$m](..$remainingTransformations) {
+                                  _root_.org.cvogt.flow.transform[$m]($returnName)(..$remainingTransformations) {
                                     ($ctxNme: _root_.org.cvogt.flow.MonadContext[$m]) => $transformed
                                   }
                                 """
@@ -197,7 +201,7 @@ class FlowMacros(val c: blackbox.Context) extends Contextual {
                         println(s"""$step - done""")
                       }
                       q"""
-                        _root_.org.cvogt.flow.transform[$m](..$remainingTransformations) {
+                        _root_.org.cvogt.flow.transform[$m]($returnName)(..$remainingTransformations) {
                           ($ctxNme: _root_.org.cvogt.flow.MonadContext[$m]) => ..$done
                         }
                       """
@@ -206,8 +210,7 @@ class FlowMacros(val c: blackbox.Context) extends Contextual {
 
                 val result = traverse(
                   Nil,
-                  if (currentTransform.isTyped) body.shard
-                  else c.untypecheck(body).shard,
+                  body.shard,
                   Step()
                 )
 
@@ -225,31 +228,6 @@ class FlowMacros(val c: blackbox.Context) extends Contextual {
         }
     }
   }
-
-//     Phase("performImplicitExtracts") { (ctx, t) =>
-//       import ctx._
-//       def doTransformation(
-//         pending: List[Tree],
-//         done: List[Tree]
-//       ): Tree = pending match {
-//         case Nil => q"..$done"
-//         case last :: Nil =>
-//           val results = done :+ last
-//           q"..$results"
-//         case statement :: rest =>
-//           val t = if (statement.tpe.typeSymbol == M.typeSymbol) {
-//             val tpe = statement.tpe.baseType(M.typeSymbol)
-//             Extract(statement, TypeTree(tpe.typeArgs(0)))
-//           } else statement
-//           doTransformation(rest, done :+ t)
-//       }
-//       next(doTransformation(t.shard, Nil))
-//     },
-
-//     Phase("comprehensiveComprehsions") { (ctx, t) =>
-//       import ctx._
-//       next(t)
-//     },
 
 
 //   //   def doContextTransforms(next: Transformation) =
@@ -324,39 +302,81 @@ class FlowMacros(val c: blackbox.Context) extends Contextual {
 //     tree
 //   }
 
-  def flat[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
-    comprehension match {
-      case q"($contextName: $tpe) => $body" =>
 
-        val m = weakTypeOf[M].typeConstructor
+  def showSym(s: Symbol) = {
+    println(c.universe.show(s))
+    println(c.universe.showDecl(s))
+    println(showRaw(s, printIds=true, printOwners=true, printTypes=true))
+    println(showRaw(s.info, printIds=true, printOwners=true, printTypes=true))
+  }
+
+  // def show(t: Tree): Tree = {
+  //   println(showRaw(c.macroApplication.symbol, printIds=true, printOwners=true, printTypes=true))
+  //   println(showCode(c.macroApplication, printIds=true,printOwners=true,printTypes=true,printRootPkg=true))
+  //   println(showRaw(c.macroApplication, printIds=true, printOwners=true,printTypes=true))
+  //   val q"$identity { $ctx => ${v@q"val $x = 3"}; $y }" = t
+  //   showSym(ctx.symbol)
+  //   showSym(ctx.symbol.owner)
+  //   showSym(ctx.symbol.owner.owner)
+  //   q"()"
+  // }
+
+  def show(t: Tree): Tree = {
+    println(showCode(t, printIds=true, printOwners=true, printTypes=true))
+    println(showRaw(t, printIds=true, printOwners=true, printTypes=true))
+    showSym(t.symbol)
+    showSym(t.symbol.owner)
+    q"()"
+  }
+
+  def flat[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
+    if (verbose) {
+      println(s"got: $comprehension")
+    }
+    comprehension match {
+      case q"($ctxParam) => $body" =>
+
+        if (verbose) {
+          println(s"transformed to: $body")
+        }
+
+        val utils = new TransformUtils[c.type](c) {
+          val M = weakTypeOf[M].typeConstructor
+          val contextName = ctxParam.name
+        }
+        import utils._
 
         val nonEmptyBody = body match {
-          case EmptyTree => q"()"
+          case EmptyTree =>
+            val result = q"()"
+            internal.setType(result, typeOf[Unit])
+            internal.setSymbol(result, symbolOf[Unit])
+            result
           case nonEmpty => nonEmpty
         }
 
-        def liftM(t: Tree): Tree =
-          q"_root_.org.cvogt.flow.Constructor[$m].create($t)"
+        val returnName = c.freshName("return")
 
-        val withCorrectReturnValue = {
-          val q"""
-            ..$rest
-            $last
-          """ = nonEmptyBody
-          q"""
-            ..$rest
-            ${liftM(last)}
-          """
+        val withCorrectReturnValue =
+          body.liftReturnValue(comprehension.symbol, TermName(returnName))
+
+        val function = q"""{ ($ctxParam) =>
+          $withCorrectReturnValue
         }
+        """
+        internal.setSymbol(function, comprehension.symbol)
 
         val debug = sys.props.get("flat_debug").map(_.toBoolean).getOrElse(false)
 
-        val M = weakTypeOf[M].typeConstructor
-
         val transformNames = allTransforms.map(p => Literal(Constant(p.name)))
-        q"""
-          _root_.org.cvogt.flow.transform[$M][${weakTypeOf[T]}](..$transformNames)(($contextName: $tpe) => $withCorrectReturnValue)
+        val result = q"""
+          _root_.org.cvogt.flow.transform[$M][${weakTypeOf[T]}](${Literal(Constant(returnName))})(..$transformNames)($function)
         """
+        if (verbose) {
+          println(s"transformed to: $result")
+        }
+        result
     }
   }
+
 }
