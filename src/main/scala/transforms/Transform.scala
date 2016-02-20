@@ -6,6 +6,8 @@ import scala.reflect.macros.blackbox
 
 abstract class Transform {
 
+  def typed: Boolean
+
   def name: String = {
     val str = this.toString
     if (str.isEmpty) ""

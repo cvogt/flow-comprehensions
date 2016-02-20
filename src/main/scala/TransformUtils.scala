@@ -9,36 +9,57 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
 
   import universe._
 
+  val visualizer = new Visualizer[macroContext.type](macroContext)
+  import visualizer._
+
   val M: Type
   val contextName: TermName
 
-  def liftM(t: Tree): Tree = {
-    type Id[T] = T
-    val sym = symbolOf[org.cvogt.flow.Constructor[Id]]
-    val tpe = t.tpe.widen
-    val liftedTpe = appliedType(M, List(tpe))
-    val constructorTpe = appliedType(sym, List(M))
-    val ctor = try {
-      macroContext.inferImplicitValue(constructorTpe, false, false, t.pos)
-    } catch {
-      case t: scala.reflect.macros.TypecheckException =>
-        macroContext.abort(macroContext.enclosingPosition, s"Could not find a Constructor instance for $M")
-    }
-    val typedCtor = macroContext.typecheck(tree=ctor, pt=constructorTpe)
-    println("===")
-    println("typedCtor:")
-    println(showCode(typedCtor, printIds=true, printOwners=true, printTypes=true))
-    println(showRaw(typedCtor, printIds=true, printOwners=true, printTypes=true))
-    println("===")
-    val create = sym.typeSignature.member(TermName("create"))
-    val r = q"$typedCtor.$create($t)"
-    println("===")
-    println("r:")
-    println(showCode(typedCtor, printIds=true, printOwners=true, printTypes=true))
-    println(showRaw(typedCtor, printIds=true, printOwners=true, printTypes=true))
-    println("===")
-    internal.setType(r, liftedTpe)
-    r
+  def liftM(t: Tree): Block = {
+
+    val tType = t.tpe.widen
+    val cType = appliedType(M, List(tType))
+    val constructType = appliedType(
+      typeOf[Construct[_, _]].typeConstructor,
+      List(tType, cType)
+    )
+    val constructInstance = macroContext.inferImplicitValue(
+      pt=constructType,
+      silent=true
+    )
+    if (constructInstance == EmptyTree) {
+      macroContext.abort(t.pos, s"Could not find a way to construct a $cType from a $tType. Consider defining an implicit instance of Construct[$tType, $cType].")
+    } else ()
+
+    val fullyExpandedConstructInstance =
+      macroContext.typecheck(
+        tree=constructInstance,
+        pt=constructType
+      )
+
+    val constructValName = TermName(macroContext.freshName("construct"))
+
+    val constructValDef =
+      moveUnderVal(t.symbol.owner, constructValName, fullyExpandedConstructInstance)
+
+    val constructIdent = constructValDef.ident
+
+    val constructMethodSymbol =
+      typeOf[Construct[_, _]]
+        .typeConstructor
+        .member(TermName("construct"))
+
+    val constructMethodType =
+      constructMethodSymbol.typeSignatureIn(constructType)
+
+    val constructMethod = q"""$constructIdent.$constructMethodSymbol"""
+    internal.setType(constructMethod, constructMethodType)
+
+    val result = q"""
+      $constructMethod($t)
+    """
+    internal.setType(result, cType)
+    Block(List(constructValDef), result)
   }
 
   def hasExtracts(t: Tree): Boolean = {
@@ -67,9 +88,41 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
     }
   }
 
+  def makeValDef(owner: Symbol, name: TermName, valType: Type, rhs: Tree): ValDef = {
+
+    val assignmentSymbol = internal.newTermSymbol(owner, name, rhs.pos, Flag.SYNTHETIC)
+    internal.setInfo(assignmentSymbol, valType)
+
+    val typeTree = TypeTree(valType)
+
+    val valDef = ValDef(Modifiers(Flag.SYNTHETIC), name, typeTree, rhs)
+    internal.setSymbol(valDef, assignmentSymbol)
+    internal.setType(valDef, NoType)
+    valDef
+  }
+
+  def doNameReturnValue(
+    owner: Symbol,
+    desiredName: TermName,
+    statements: List[Tree],
+    returnValue: Tree,
+    returnType: Type
+  ): Tree = {
+
+    val assignment = moveUnderVal(owner, desiredName, returnValue)
+    val ident = Ident(desiredName)
+    internal.setSymbol(ident, assignment.symbol)
+    internal.setType(ident, returnType)
+
+    val block = Block(statements :+ assignment, ident)
+    internal.setType(block, returnType)
+    block
+  }
+
   implicit class TreeOps(t: universe.Tree) {
     def shard: List[Tree] = t match {
-      case q"..${result: List[Tree]}" => result
+      case Block(statements, returnValue) => statements :+ returnValue
+      case Typed(Block(statements, returnValue), tpt) => statements :+ returnValue
       case other => List(other)
     }
     def nameReturnValue(
@@ -77,54 +130,14 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
       desiredName: TermName
     ): Tree = {
       t match {
-        case Block(statements, expr) =>
-          val assignmentTpe = expr.tpe.widen
-          val assignmentSymbol = internal.newTermSymbol(owner, desiredName)
-          internal.setInfo(assignmentSymbol, assignmentTpe)
-          val assignment = ValDef(Modifiers(Flag.SYNTHETIC), desiredName, TypeTree(), expr)
-          internal.setType(assignment, assignmentTpe)
-
-          val ident = Ident(desiredName)
-          internal.setSymbol(ident, assignmentSymbol)
-          internal.setType(ident, assignmentTpe)
-
-          Block(statements :+ assignment, ident)
-
         case Typed(Block(statements, expr), tpt) =>
-          val assignmentTpe = tpt.tpe.widen
-          val assignmentSymbol = internal.newTermSymbol(owner, desiredName)
-          internal.setInfo(assignmentSymbol, assignmentTpe)
-          val assignment = ValDef(Modifiers(Flag.SYNTHETIC), desiredName, tpt, expr)
-          internal.setType(assignment, assignmentTpe)
-
-          val ident = Ident(desiredName)
-          internal.setSymbol(ident, assignmentSymbol)
-          internal.setType(ident, assignmentTpe)
-          Block(statements :+ assignment, ident)
-
-        case Typed(single, tpt) =>
-          val assignmentTpe = tpt.tpe.widen
-          val assignmentSymbol = internal.newTermSymbol(owner, desiredName)
-          internal.setInfo(assignmentSymbol, assignmentTpe)
-          val assignment = ValDef(Modifiers(Flag.SYNTHETIC), desiredName, tpt, single)
-          internal.setType(assignment, assignmentTpe)
-
-          val ident = Ident(desiredName)
-          internal.setSymbol(ident, assignmentSymbol)
-          internal.setType(ident, single.tpe)
-          Block(List(assignment), ident)
-
-        case single =>
-          val assignmentTpe = single.tpe.widen
-          val assignmentSymbol = internal.newTermSymbol(owner, desiredName)
-          internal.setInfo(assignmentSymbol, assignmentTpe)
-          val assignment = ValDef(Modifiers(Flag.SYNTHETIC), desiredName, TypeTree(), single)
-          internal.setType(assignment, assignmentTpe)
-
-          val ident = Ident(desiredName)
-          internal.setSymbol(ident, assignmentSymbol)
-          internal.setType(ident, single.tpe)
-          Block(List(assignment), ident)
+          doNameReturnValue(owner, desiredName, statements, expr, tpt.tpe)
+        case Block(statements, expr) =>
+          doNameReturnValue(owner, desiredName, statements, expr, expr.tpe.widen)
+        case Typed(expr, tpt) =>
+          doNameReturnValue(owner, desiredName, Nil, expr, tpt.tpe)
+        case expr =>
+          doNameReturnValue(owner, desiredName, Nil, expr, expr.tpe.widen)
       }
     }
     def liftReturnValue(
@@ -134,24 +147,56 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
       val tmpName = TermName(macroContext.freshName("unlifed"))
       nameReturnValue(owner, tmpName) match {
         case Block(statements, expr) =>
-          val assignmentSymbol = internal.newTermSymbol(owner, desiredName)
-          val liftedTpe = appliedType(M, expr.tpe.widen)
-          internal.setInfo(assignmentSymbol, liftedTpe)
-          val assignment = ValDef(Modifiers(Flag.SYNTHETIC), desiredName, TypeTree(), liftM(expr))
-          internal.setType(assignment, liftedTpe)
-
-          val ident = Ident(desiredName)
-          internal.setSymbol(ident, assignmentSymbol)
-          internal.setType(ident, liftedTpe)
-
-          Block(statements :+ assignment, ident)
+          val liftedType = appliedType(M, expr.tpe.widen)
+          val Block(List(constructValDef), liftedReturn) = liftM(expr)
+          doNameReturnValue(
+            owner,
+            desiredName,
+            statements :+ constructValDef,
+            liftedReturn,
+            liftedType
+          )
       }
     }
   }
 
-  implicit class ListTreeOps(t: List[universe.Tree]) {
-    def unify: Tree = q"..$t"
+  implicit class ValDefOps(d: universe.ValDef) {
+    def ident: Ident = {
+      val ident = Ident(d.name)
+      internal.setSymbol(ident, d.symbol)
+      internal.setType(ident, d.tpt.tpe)
+      ident
+    }
   }
 
+  implicit class DefDefOps(d: universe.DefDef) {
+    def ident: Ident = {
+      val ident = Ident(d.name)
+      internal.setSymbol(ident, d.symbol)
+      internal.setType(ident, d.tpt.tpe)
+      ident
+    }
+  }
+
+  implicit class ListTreeOps(t: List[universe.Tree]) {
+    def unify: Tree = {
+      val resultType = t.last.tpe
+      val result = q"..$t"
+      internal.setType(result, resultType)
+      result
+    }
+  }
+
+  def moveUnderVal(directOwner: Symbol, valName: TermName, rhs: Tree): ValDef = {
+    val valSymbol = internal.newTermSymbol(directOwner, valName, rhs.pos, Flag.SYNTHETIC)
+    internal.setInfo(valSymbol, rhs.tpe)
+
+    val typeTree = TypeTree(rhs.tpe)
+
+    val valDef = ValDef(Modifiers(Flag.SYNTHETIC), valName, typeTree, rhs)
+    internal.setSymbol(valDef, valSymbol)
+    internal.setType(valDef, NoType)
+    internal.changeOwner(valDef, directOwner, valSymbol)
+  }
 
 }

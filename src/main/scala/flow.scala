@@ -1,5 +1,6 @@
 package org.cvogt.flow
 
+import scala.annotation.implicitNotFound
 import scala.language.higherKinds
 import scala.annotation.compileTimeOnly
 import scala.language.implicitConversions
@@ -8,30 +9,42 @@ import scala.language.experimental.macros
 @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
 final class FlowContext private()
 
-abstract class Constructor[M[_]]{
-  def create[T](v: T): M[T]
+@implicitNotFound("Could not find a way to construct a ${Constructed} from a ${Param}. Consider defining an implicit instance of Construct[${Param}, ${Constructed}].")
+class Construct[Param, Constructed](
+  impl: Param => Constructed
+) {
+  def construct(p: Param): Constructed = impl(p)
 }
-object Constructor {
-  def apply[M[_]](implicit c: Constructor[M]) = c
-}
+object Construct extends ConstructInstances
+trait ConstructInstances extends LowPriorityConstructImplicits {
 
-object `package`{
+  object TheOptionConstruct extends Construct[Any, Option[Any]](Some.apply)
+  implicit def optionConstruct[T] = TheOptionConstruct.asInstanceOf[Construct[T, Option[T]]]
 
-  implicit object OptionConstructor extends Constructor[Option]{
-    def create[T](v: T) = Some(v)
-  }
   import scala.concurrent._
-  implicit def FutureConstructor: Constructor[Future] = new Constructor[Future]{
-    def create[T](v: T) = Future.successful(v)
-  }
-  import collection.generic.CanBuildFrom
-  implicit def CanBuildFromConstructor[M[_]](implicit cbf: CanBuildFrom[_, AnyRef, M[AnyRef]]) = new Constructor[M]{
-    def create[T](v: T) = {
-      val b = cbf.asInstanceOf[ CanBuildFrom[_, T, M[T]] ]()
-      b += v
-      b.result
-    }
-  }
+  object TheFutureConstruct extends Construct[Any, Future[Any]](Future.successful)
+  implicit def futureConstruct[T] = TheFutureConstruct.asInstanceOf[Construct[T, Future[T]]]
+
+}
+trait LowPriorityConstructImplicits {
+  implicit def nameBasedConstruct[T, C]: Construct[T, C] =
+    macro FlowMacros.nameBasedConstruct[T, C]
+}
+
+@implicitNotFound("Could not find a way to flatMap over objects of type ${CT} using functions of type ${T} => ${CU}. Consider defining an implicit instance of FlatMap[${CT}, ${T}, ${CU}]")
+class FlatMap[CT, T, CU](
+  impl: (CT, (T => CU)) => CU
+) {
+  def flatMap(ct: CT, f: T => CU): CU = impl(ct, f)
+}
+
+object FlatMap extends FlatMapInstances
+trait FlatMapInstances {
+  implicit def nameBasedFlatMap[CT, T, CU]: FlatMap[CT, T, CU] =
+    macro FlowMacros.nameBasedFlatMap[CT, T, CU]
+}
+
+object `package` {
 
   object implicits{
     import scala.language.implicitConversions
@@ -47,6 +60,8 @@ object `package`{
   def flat[M[_]] = new flat[M]
   def transform[M[_]] = new transform[M]
   def show(t: Any): Unit = macro FlowMacros.show
+  def gui(t: Any): Unit = macro FlowMacros.gui
+  def echo[T](t: T): T = macro FlowMacros.echo[T]
 }
 
 sealed abstract class Comprehension[M[_]] {
@@ -77,6 +92,9 @@ class FlowMacros(val c: blackbox.Context) {
   import c.weakTypeOf
   import c.internal
 
+  val visualizer = new Visualizer[c.type](c)
+  import visualizer._
+
   val debug =
     sys.props.get("flat_debug_transforms").getOrElse("").split(",").toSet
 
@@ -86,13 +104,11 @@ class FlowMacros(val c: blackbox.Context) {
       case _ => false
     }
 
-  val ownerFixer = new OwnerFixer[c.type](c)
-
   import org.cvogt.flow.transforms._
 
-  val allTransforms = Seq(
-    ImplicitExtractions,
-    Normalize,
+  val allTransforms = Seq[Transform](
+    // ImplicitExtractions,
+    // Normalize,
     RewriteExtractions
   )
 
@@ -105,7 +121,8 @@ class FlowMacros(val c: blackbox.Context) {
           case _ => c.abort(returnName.pos, "return name must be a String literal")
         }
         transforms match {
-          case Nil => body
+          case Nil =>
+            internal.changeOwner(body, comprehension.symbol, comprehension.symbol.owner)
           case (t@Literal(Constant(currentTransformName: String))) :: remainingTransformations =>
             def ifDebug(body: => Unit): Unit = {
               if(debug(currentTransformName)) body
@@ -183,28 +200,24 @@ class FlowMacros(val c: blackbox.Context) {
                                 println(s"""$step - result: recur""")
                               }
                               val input = traverse(Nil, t, step.sub)
-                              val transformed = f(input)
-                              val output = q"""
-                                  _root_.org.cvogt.flow.transform[$m]($returnName)(..$remainingTransformations) {
-                                    ($ctxNme: _root_.org.cvogt.flow.MonadContext[$m]) => $transformed
-                                  }
-                                """
+                              val output = f(input)
                               ifVerbose {
                                 println(s"""$step - transform input: ${showCode(input)}""")
                                 println(s"$step - transform output: ${showCode(output)}")
                               }
-                              output
+                              traverse(done ++ output.shard, Nil, step.next)
                           }
                       }
                     case Nil =>
                       ifVerbose {
                         println(s"""$step - done""")
                       }
-                      q"""
+                      val result = q"""
                         _root_.org.cvogt.flow.transform[$m]($returnName)(..$remainingTransformations) {
                           ($ctxNme: _root_.org.cvogt.flow.MonadContext[$m]) => ..$done
                         }
                       """
+                      c.typecheck(result)
                   }
                 }
 
@@ -329,6 +342,11 @@ class FlowMacros(val c: blackbox.Context) {
     q"()"
   }
 
+  def gui(t: Tree): Tree = {
+    visualize("gui" -> t)
+    q"()"
+  }
+
   def flat[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
     if (verbose) {
       println(s"got: $comprehension")
@@ -350,7 +368,6 @@ class FlowMacros(val c: blackbox.Context) {
           case EmptyTree =>
             val result = q"()"
             internal.setType(result, typeOf[Unit])
-            internal.setSymbol(result, symbolOf[Unit])
             result
           case nonEmpty => nonEmpty
         }
@@ -358,7 +375,7 @@ class FlowMacros(val c: blackbox.Context) {
         val returnName = c.freshName("return")
 
         val withCorrectReturnValue =
-          body.liftReturnValue(comprehension.symbol, TermName(returnName))
+          body.liftReturnValue(comprehension.symbol.owner, TermName(returnName))
 
         val function = q"""{ ($ctxParam) =>
           $withCorrectReturnValue
@@ -375,8 +392,30 @@ class FlowMacros(val c: blackbox.Context) {
         if (verbose) {
           println(s"transformed to: $result")
         }
+
         result
     }
   }
 
+  def echo[T](t: Tree): Tree = t
+
+  def nameBasedConstruct[Param: WeakTypeTag, Out: WeakTypeTag]: Tree = {
+    val Param = weakTypeOf[Param]
+    val Out = appliedType(weakTypeOf[Out], Param)
+    val OutCompanion = Out.typeSymbol.companion
+    c.typecheck(
+      q"""
+        new _root_.org.cvogt.flow.Construct[$Param, $Out]($OutCompanion.apply(_: $Param))
+      """
+    )
+  }
+
+  def nameBasedFlatMap[CT: WeakTypeTag, T: WeakTypeTag, CU: WeakTypeTag]: Tree = {
+    val CT = weakTypeOf[CT]
+    val T = weakTypeOf[T]
+    val CU = weakTypeOf[CU]
+    q"""
+      new _root_.org.cvogt.flow.FlatMap[$CT, $T, $CU]((_: $CT).flatMap(_: ($T => $CU)))
+    """
+  }
 }
