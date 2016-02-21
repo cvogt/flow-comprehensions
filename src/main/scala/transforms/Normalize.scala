@@ -50,12 +50,17 @@ case object Normalize extends Transform {
           """)
       },
       Rule("extract in line with op") {
-        case v@q"$mods val $nme: $tpe = $pre.$op[..$targs](...$vargs)" if hasExtracts(pre) =>
+        case v@q"$mods val $nme: $tpe = ${ap@q"$pre.$op"}[..$targs](...$vargs)" if hasExtracts(pre) =>
           val tmpNme = TermName(macroContext.freshName("anon"))
-          val newValDef = q"$mods val $nme: $tpe = $tmpNme.$op[..$targs](...$vargs)"
+          val tmpIdent = Ident(tmpNme)
+          internal.setType(tmpIdent, pre.tpe)
+          val newAp = q"$tmpIdent.$op"
+          internal.setType(newAp, ap.tpe)
+          internal.setSymbol(newAp, ap.symbol)
+          val newValDef = q"$mods val $nme: $tpe = $newAp[..$targs](...$vargs)"
           internal.setSymbol(newValDef, v.symbol)
           RewriteTo(q"""
-            val $tmpNme = $pre
+            val $tmpNme: ${TypeTree(pre.tpe)} = $pre
             $newValDef
           """)
       },
@@ -143,8 +148,8 @@ case object Normalize extends Transform {
           """)
       },
       Rule("extract in argument") {
-        case v@q"$mods val $nme: $tpe = $pre.$op[..$targs](...$vargss)" if vargss.exists(_.exists(hasExtracts)) =>
-          val vparamss = pre.tpe.member(op).asMethod.paramLists
+        case v@q"$mods val $nme: $tpe = ${ap@q"$pre.$op"}[..$targs](...$vargss)" if vargss.exists(_.exists(hasExtracts)) =>
+          val vparamss = ap.tpe.paramLists
           val newVargss = (vargss zip vparamss).map { case (vargs, vparams) =>
             (vargs zip vparams).map {
               case (normalArg, param) if noExtracts(normalArg) => normalArg

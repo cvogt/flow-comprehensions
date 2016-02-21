@@ -60,37 +60,37 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
       }
     )
 
-    assert(
-      List(8,6,4,3) == flat[List]{ c =>
-        val l1 = c?List(1,2)
-        val l2 = c?List(3,4)
-        c!(_.reverse)
-        l1 * l2
-      }
-    )
+    // assert(
+    //   List(8,6,4,3) == flat[List]{ c =>
+    //     val l1 = c?List(1,2)
+    //     val l2 = c?List(3,4)
+    //     c!(_.reverse)
+    //     l1 * l2
+    //   }
+    // )
 
-    assert(
-      List(3,4,6,8) == flat[List]{ c =>
-        val l1 = c?List(1,2)
-        val l2 = c?List(3,4)
-        c!(_.reverse)
-        c!(_.reverse)
-        l1 * l2
-      }
-    )
+    // assert(
+    //   List(3,4,6,8) == flat[List]{ c =>
+    //     val l1 = c?List(1,2)
+    //     val l2 = c?List(3,4)
+    //     c!(_.reverse)
+    //     c!(_.reverse)
+    //     l1 * l2
+    //   }
+    // )
 
-    assert(
-      List(32,24,8,6) == flat[List]{ c =>
-        val l1 = c?List(1,2)
-        val l2 = c?List(3,4)
-        val unrelated = 2
-        def foo(i: Int) = i
-        val unrelated2 = foo(l1)
-        c!(_.reverse)
-        // foo(l1) // does not compile
-        l1 * l2 * unrelated * unrelated2
-      }
-    )
+    // assert(
+    //   List(32,24,8,6) == flat[List]{ c =>
+    //     val l1 = c?List(1,2)
+    //     val l2 = c?List(3,4)
+    //     val unrelated = 2
+    //     def foo(i: Int) = i
+    //     val unrelated2 = foo(l1)
+    //     c!(_.reverse)
+    //     // foo(l1) // does not compile
+    //     l1 * l2 * unrelated * unrelated2
+    //   }
+    // )
 
     assert(
       List(15,18,20,24,30,36,40,48) == flat[List]{ c =>
@@ -101,50 +101,50 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
       }
     )
 
-    assert(
-      List(48,40,36,30,24,20,18,15) == flat[List]{ c =>
-        val l1 = c?List(1,2)
-        val l2 = c?List(3,4)
-        val l3 = c?List(5,6)
-        c!(_.reverse)
-        l3 * l1 * l2
-      }
-    )
+    // assert(
+    //   List(48,40,36,30,24,20,18,15) == flat[List]{ c =>
+    //     val l1 = c?List(1,2)
+    //     val l2 = c?List(3,4)
+    //     val l3 = c?List(5,6)
+    //     c!(_.reverse)
+    //     l3 * l1 * l2
+    //   }
+    // )
 
-    assert(
-      List(40,48,30,36,20,24,15,18) == flat[List]{ c =>
-        val l1 = c?List(1,2)
-        val l2 = c?List(3,4)
-        c!(_.reverse)
-        val l3 = c?List(5,6)
-        l3 * l1 * l2
-      }
-    )
+    // assert(
+    //   List(40,48,30,36,20,24,15,18) == flat[List]{ c =>
+    //     val l1 = c?List(1,2)
+    //     val l2 = c?List(3,4)
+    //     c!(_.reverse)
+    //     val l3 = c?List(5,6)
+    //     l3 * l1 * l2
+    //   }
+    // )
 
     def reverse[T] = (_:List[T]).reverse
 
-    assert(
-      List(40,48,30,36,20,24,15,18) == flat[List]{ c =>
-        val l1 = c?List(1,2)
-        val l2 = c?List(3,4)
-        c!(reverse)
-        val l3 = c?List(5,6)
-        l3 * l1 * l2
-      }
-    )
+    // assert(
+    //   List(40,48,30,36,20,24,15,18) == flat[List]{ c =>
+    //     val l1 = c?List(1,2)
+    //     val l2 = c?List(3,4)
+    //     c!(reverse)
+    //     val l3 = c?List(5,6)
+    //     l3 * l1 * l2
+    //   }
+    // )
 
-    implicit class IntListExtensions[T](l: List[T]){
-      def reverse2 = l.reverse
-    }
-    assert(
-      List(40,48,30,36,20,24,15,18) == flat[List]{ c =>
-        val l1 = c?List(1,2)
-        val l2 = c?List(3,4)
-        c!(_.reverse2)
-        val l3 = c?List(5,6)
-        l3 * l1 * l2
-      }
-    )
+    // implicit class IntListExtensions[T](l: List[T]){
+    //   def reverse2 = l.reverse
+    // }
+    // assert(
+    //   List(40,48,30,36,20,24,15,18) == flat[List]{ c =>
+    //     val l1 = c?List(1,2)
+    //     val l2 = c?List(3,4)
+    //     c!(_.reverse2)
+    //     val l3 = c?List(5,6)
+    //     l3 * l1 * l2
+    //   }
+    // )
 
     /*
     assert(
@@ -158,17 +158,17 @@ class Tests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
     )
     */
 
-    assert(
-      List(4,3,8,6) == flat[List]{ c =>
-        val l1 = c ? List(2,1)
-        c!(_.sortBy(_ => l1))
-        val l2 = c?List(4,3)
-        l1 * l2
-      }
-    )
+    // assert(
+    //   List(4,3,8,6) == flat[List]{ c =>
+    //     val l1 = c ? List(2,1)
+    //     c!(_.sortBy(_ => l1))
+    //     val l2 = c?List(4,3)
+    //     l1 * l2
+    //   }
+    // )
 
     assert(
-      Seq(4,3,8,6) == flat[Seq]{ c =>
+      Seq(4,3,8,6) == flat[Seq] { c =>
         c?Seq(1,2) * c?Seq(4,3)
       }
     )

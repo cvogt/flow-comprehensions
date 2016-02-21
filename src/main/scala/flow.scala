@@ -404,6 +404,7 @@ class FlowMacros(val c: blackbox.Context) {
     if (verbose) {
       println(s"got: $comprehension")
     }
+
     val withParam = comprehension match {
       case q"($ctxParam) => $body" => comprehension
       case other =>
