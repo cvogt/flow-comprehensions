@@ -1,5 +1,6 @@
 package org.cvogt.flow
 
+import javax.swing.UIManager
 import reflect.macros.blackbox
 
 class Visualizer[C <: blackbox.Context](val macroContext: C) {
@@ -14,7 +15,9 @@ class Visualizer[C <: blackbox.Context](val macroContext: C) {
     val locks = gTrees.mapValues(_ => new scala.concurrent.Lock)
     import global.treeBrowsers._
     gTrees.map { case (name, tree) =>
-      val frame = new BrowserFrame(name)
+      val frame = new BrowserFrame(name) {
+        UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName)
+      }
       val model = new ASTTreeModel(tree)
       frame.setTreeModel(model)
       frame.createFrame(locks(name))

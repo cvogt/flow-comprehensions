@@ -5,23 +5,24 @@ package transforms
 import scala.reflect.macros.blackbox
 
 case object ImplicitExtractions extends Transform {
-  override def rewrites[C <: blackbox.Context](transformContext: TransformContext[C]): List[transformContext.Rewrite] = {
+  override def isTyped = true
+  override def rules[C <: blackbox.Context](transformContext: TransformContext[C]): List[transformContext.Rule] = {
     import transformContext._
     import macroContext.universe._
     List(
-      Rewrite("don't change return") {
+      Rule("don't change return") {
         case Ident(i) if i.encodedName.toString == returnName.encodedName.toString => Accept
       },
-      Rewrite("don't change definitions") {
+      Rule("don't change definitions") {
         case d: ValOrDefDef => Accept
       },
-      Rewrite("extract") {
+      Rule("extract") {
         case t if t.tpe != null && t.tpe.typeSymbol != null && t.tpe.typeSymbol == M.typeSymbol =>
-          val tpe = t.tpe.baseType(M.typeSymbol)
-          val extracted = Extract(t, TypeTree(tpe.typeArgs(0)))
+          val tpe = M.typeSymbol.typeSignatureIn(t.tpe)
+          val extracted = Extract(t, TypeTree())
           RewriteTo(extracted)
       },
-      Rewrite("don't change") {
+      Rule("don't change") {
         case t => Accept
       }
     )

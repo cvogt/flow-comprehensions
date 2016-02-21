@@ -6,7 +6,7 @@ import scala.reflect.macros.blackbox
 
 abstract class Transform {
 
-  def typed: Boolean
+  def isTyped: Boolean
 
   def name: String = {
     val str = this.toString
@@ -14,6 +14,6 @@ abstract class Transform {
     else str.head.toLower +: str.tail
   }
 
-  def rewrites[C <: blackbox.Context](transformContext: TransformContext[C]): List[transformContext.Rewrite]
+  def rules[C <: blackbox.Context](transformContext: TransformContext[C]): List[transformContext.Rule]
 
 }

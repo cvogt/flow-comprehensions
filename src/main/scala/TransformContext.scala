@@ -8,14 +8,15 @@ abstract class TransformContext[C <: blackbox.Context](override val macroContext
   import universe._
 
   val returnName: TermName
+  val returnType: Type
 
   def recur(t: Tree): Tree
 
-  sealed trait Result
-  case object Accept extends Result
-  case class RewriteTo(replacement: Tree) extends Result
-  case class TransformRest(transformation: Tree => Tree) extends Result
+  sealed trait Action
+  case object Accept extends Action
+  case class RewriteTo(replacement: Tree, reprocess: Boolean = true) extends Action
+  case class TransformRest(transformation: Tree => Tree) extends Action
 
-  case class Rewrite(name: String)(val pf: PartialFunction[Tree, Result])
+  case class Rule(name: String)(val pf: PartialFunction[Tree, Action])
 
 }

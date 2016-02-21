@@ -15,51 +15,8 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
   val M: Type
   val contextName: TermName
 
-  def liftM(t: Tree): Block = {
-
-    val tType = t.tpe.widen
-    val cType = appliedType(M, List(tType))
-    val constructType = appliedType(
-      typeOf[Construct[_, _]].typeConstructor,
-      List(tType, cType)
-    )
-    val constructInstance = macroContext.inferImplicitValue(
-      pt=constructType,
-      silent=true
-    )
-    if (constructInstance == EmptyTree) {
-      macroContext.abort(t.pos, s"Could not find a way to construct a $cType from a $tType. Consider defining an implicit instance of Construct[$tType, $cType].")
-    } else ()
-
-    val fullyExpandedConstructInstance =
-      macroContext.typecheck(
-        tree=constructInstance,
-        pt=constructType
-      )
-
-    val constructValName = TermName(macroContext.freshName("construct"))
-
-    val constructValDef =
-      moveUnderVal(t.symbol.owner, constructValName, fullyExpandedConstructInstance)
-
-    val constructIdent = constructValDef.ident
-
-    val constructMethodSymbol =
-      typeOf[Construct[_, _]]
-        .typeConstructor
-        .member(TermName("construct"))
-
-    val constructMethodType =
-      constructMethodSymbol.typeSignatureIn(constructType)
-
-    val constructMethod = q"""$constructIdent.$constructMethodSymbol"""
-    internal.setType(constructMethod, constructMethodType)
-
-    val result = q"""
-      $constructMethod($t)
-    """
-    internal.setType(result, cType)
-    Block(List(constructValDef), result)
+  def liftM(t: Tree): Tree = {
+    q"implicitly[Construct[$M]].create($t)"
   }
 
   def hasExtracts(t: Tree): Boolean = {
@@ -74,7 +31,7 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
   }
 
   def isExtract(t: Tree): Boolean = t match {
-    case q"$contextName.?[$tpe]($body)" => true
+    case Extract(body, _) => true
     case other => false
   }
 
@@ -84,6 +41,37 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
     def apply(body: Tree, tpe: Tree): Tree = q"$contextName.?[$tpe]($body)"
     def unapply(t: Tree): Option[(Tree, Tree)] = t match {
       case q"$contextName.?[$tpe]($body)" => Some((body, tpe))
+      case q"$contextName.?($body)" => Some((body, TypeTree()))
+      case other => None
+    }
+  }
+
+  def hasPostfixExtracts(t: Tree): Boolean = {
+    var foundExtraction = false
+    new Traverser {
+      override def traverse(t: Tree): Unit = {
+        if (foundExtraction || isPostfixExtract(t)) foundExtraction = true
+        else super.traverse(t)
+      }
+    }.traverse(t)
+    foundExtraction
+  }
+
+  def isPostfixExtract(t: Tree): Boolean = t match {
+    case PostfixExtract(body, _) => true
+    case other => false
+  }
+
+  def noPostfixExtracts(t: Tree): Boolean = !hasPostfixExtracts(t)
+
+  object PostfixExtract {
+    def apply(body: Tree, tpe: Tree): Tree =
+      q"org.cvogt.flow.`package`.PostfixExtract[$M, $tpe]($body).value"
+    def unapply(t: Tree): Option[(Tree, Tree)] = t match {
+      case q"org.cvogt.flow.`package`.PostfixExtract[$m, $tpe]($body).value" if m.tpe <:< M =>
+        Some((body, tpe))
+      case q"org.cvogt.flow.`package`.PostfixExtract($body).value" =>
+        Some((body, TypeTree()))
       case other => None
     }
   }
@@ -178,12 +166,9 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
     }
   }
 
-  implicit class ListTreeOps(t: List[universe.Tree]) {
+  implicit class ListTreeOps(ts: List[universe.Tree]) {
     def unify: Tree = {
-      val resultType = t.last.tpe
-      val result = q"..$t"
-      internal.setType(result, resultType)
-      result
+      q"..$ts"
     }
   }
 
