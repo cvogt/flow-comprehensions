@@ -148,20 +148,14 @@ case object Normalize extends Transform {
           """)
       },
       Rule("extract in argument") {
-        case v@q"$mods val $nme: $tpe = ${ap@q"$pre.$op"}[..$targs](...$vargss)" if vargss.exists(_.exists(hasExtracts)) =>
-          val vparamss = ap.tpe.paramLists
-          val newVargss = (vargss zip vparamss).map { case (vargs, vparams) =>
-            (vargs zip vparams).map {
-              case (normalArg, param) if noExtracts(normalArg) => normalArg
-              case (extractingArg, param) if param.asTerm.isByNameParam =>
-                macroContext.abort(
-                  extractingArg.pos,
-                  s"Extration isn't allowed inside of arguments to by-name parameters"
-                )
-              case (AssignOrNamedArg(lhs, rhs), param) if hasExtracts(rhs) =>
+        case v@q"$mods val $nme: $tpe = $pre.$op[..$targs](...$vargss)" if vargss.exists(_.exists(hasExtracts)) =>
+          val newVargss = vargss.map { vargs =>
+            vargs.map {
+              case normalArg if noExtracts(normalArg) => normalArg
+              case AssignOrNamedArg(lhs, rhs) =>
                 val tmpNme = TermName(macroContext.freshName("arg"))
                 AssignOrNamedArg(lhs, q"$tmpNme")
-              case (arg, param) =>
+              case arg =>
                 val tmpNme = TermName(macroContext.freshName("arg"))
                 q"$tmpNme"
             }

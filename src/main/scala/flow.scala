@@ -110,6 +110,7 @@ class FlowMacros(val c: blackbox.Context) {
   val allTransforms = Seq[Transform](
     ImplicitExtractions,
     PostfixExtractions,
+    ValidateLazy,
     Normalize,
     RewriteExtractions
   )
