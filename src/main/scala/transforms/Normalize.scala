@@ -175,6 +175,34 @@ case object Normalize extends Transform {
           ).unify
           RewriteTo(res)
       },
+      Rule("extract in argument to bare function") {
+        case v@q"$mods val $nme: $tpe = $op[..$targs](...$vargss)" if vargss.exists(_.exists(hasExtracts)) =>
+          val newVargss = vargss.map { vargs =>
+            vargs.map {
+              case normalArg if noExtracts(normalArg) => normalArg
+              case AssignOrNamedArg(lhs, rhs) =>
+                val tmpNme = TermName(macroContext.freshName("arg"))
+                AssignOrNamedArg(lhs, q"$tmpNme")
+              case arg =>
+                val tmpNme = TermName(macroContext.freshName("arg"))
+                q"$tmpNme"
+            }
+          }
+          val bindings = (newVargss.flatten zip vargss.flatten) flatMap {
+            case (newArg, oldArg) if noExtracts(oldArg) => None
+            case (AssignOrNamedArg(lhs, _), AssignOrNamedArg(_, rhs)) =>
+              Some(q"val $lhs = $rhs")
+            case (Ident(lhs: TermName), rhs) =>
+              val r = q"val $lhs = $rhs"
+              Some(r)
+          }
+          val newValDef = q"$mods val $nme: $tpe = $op[..$targs](...$newVargss)"
+          internal.setSymbol(newValDef, v.symbol)
+          val res = new ListTreeOps(
+            bindings :+ newValDef
+          ).unify
+          RewriteTo(res)
+      },
       Rule("accept rest") {
         case line => Accept
       }

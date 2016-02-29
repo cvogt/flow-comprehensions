@@ -12,23 +12,32 @@ case object ValidateLazy extends Transform {
     import universe._
     import macroContext.internal
     import visualizer._
-    List(
-      Rule("check function application") {
-        case v@q"$mods val $nme: $tpe = ${ap@q"$pre.$op"}[..$targs](...$vargss)" =>
-          val vparamss = ap.tpe.paramLists
-          (vargss zip vparamss).foreach { case (vargs, vparams) =>
-            (vargs zip vparams).foreach {
-              case (arg, param) if hasExtracts(arg) && param.asTerm.isByNameParam =>
-                macroContext.abort(
-                  arg.pos,
-                  s"Extration isn't allowed inside of arguments to by-name parameters"
-                )
-              case other => ()
-            }
+    def findExtractInByName(t: Tree): Option[Tree] = {
+      var badExtraction = Option.empty[Tree]
+      new Traverser {
+        override def traverse(t: Tree): Unit = t match {
+          case Extract(body, tpe) => super.traverse(body)
+          case v@q"$ap[..$targs](...$vargss)" => {
+            val vparamss = ap.tpe.paramLists
+              (vargss zip vparamss).foreach { case (vargs, vparams) =>
+                (vargs zip vparams).foreach { case (arg, param) =>
+                  if (hasExtracts(arg) && param.asTerm.isByNameParam) {
+                    badExtraction = Some(arg)
+                  } else super.traverse(t)
+                }
+              }
           }
-          Accept
-      },
-      Rule("accept others") { case other => Accept }
+          case other => super.traverse(other)
+        }
+      }.traverse(t)
+      badExtraction
+    }
+    List(
+      Rule("check function application") { case t =>
+        val extractInByName = findExtractInByName(t)
+        extractInByName.foreach(bad => macroContext.abort(bad.pos, "Cannot extract in by-name parameter"))
+        Accept
+      }
     )
   }
 }
