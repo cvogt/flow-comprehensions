@@ -40,11 +40,13 @@ object `package` {
   }
   @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
   implicit class Embed[M[_],T](m: M[T]){
-    @compileTimeOnly("the prefix ? operator can only be used in a flow comprehension scope such as flat{...}, flow{...}")
-    def unary_? : T = ???
+  @compileTimeOnly("the prefix ? operator can only be used in a flow comprehension scope such as flat{...}, flow{...}")
+  def unary_? : T = ???
   }
 
+  @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
   implicit def allowOmitedContextParam[M[_], T](t: T): MonadContext[M] => T = ???
+  @compileTimeOnly("value calls can only be used where they will be handled by an enclosing `flat` block")
   implicit class PostfixExtract[M[_], T](mt: M[T]) {
     def value: T = ???
   }
