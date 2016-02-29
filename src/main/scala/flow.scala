@@ -1,5 +1,6 @@
 package org.cvogt.flow
 
+import scala.annotation.implicitNotFound
 import scala.language.higherKinds
 import scala.annotation.compileTimeOnly
 import scala.language.implicitConversions
@@ -8,38 +9,29 @@ import scala.language.experimental.macros
 @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
 final class FlowContext private()
 
-abstract class Constructor[H[_]]{
-  def create[T](v: T): H[T]
+@implicitNotFound("Could not find a Construct instance for context type ${C}. Consider defining one.")
+trait Construct[C[_]] {
+  def create[T](t: T): C[T]
+}
+object Construct extends ConstructInstances
+trait ConstructInstances extends LowPriorityConstructImplicits {
+
+  implicit object TheOptionConstruct extends Construct[Option] {
+    def create[T](t: T): Option[T] = Some(t)
+  }
+
+  import scala.concurrent._
+  object TheFutureConstruct extends Construct[Future] {
+    def create[T](t: T): Future[T] = Future.successful(t)
+  }
+
+}
+trait LowPriorityConstructImplicits {
+  implicit def nameBasedConstruct[C[_]]: Construct[C] =
+    macro FlowMacros.nameBasedConstruct[C[_]]
 }
 
-object `package`{
-  //@compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
-  // We can't make this implicit because then it is used whenever something does not have an apply
-  // which leads to weird error messages, e.g. Baz.apply(5) Expected FlowContext Found Int
-  //implicit def enableFlowScope[T](t: T): FlowContext => T = ???
-
-  implicit object OptionConstructor extends Constructor[Option]{
-    def create[T](v: T) = Some(v)
-  }
-  import scala.concurrent._
-  implicit def FutureConstructor: Constructor[Future] = new Constructor[Future]{
-    def create[T](v: T) = Future.successful(v)
-  }
-  import collection.generic.CanBuildFrom
-  /** Generic Constructor for anything that has a CanBuildFrom.*/
-  implicit def CanBuildFromConstructor[M[_]](implicit cbf: CanBuildFrom[_, AnyRef, M[AnyRef]]) = new Constructor[M]{
-    // Requires some cheating on the type-level. Assuming it's sound in relevant cases due to lack of counter examples.
-    // Worst case, we have to replace this with manual instances for all important types.
-    // That would probably also be more performant because of fewer allocations.
-    def create[T](v: T) = {
-      val b = cbf.asInstanceOf[ CanBuildFrom[_, T, M[T]] ]()
-      b += v
-      b.result
-    }
-  }
-
-  //@compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
-  //implicit def unpackFlowContextMonad[M[_],T](t: T): M[FlowContext] => T = ???
+object `package` {
 
   object implicits{
     import scala.language.implicitConversions
@@ -48,87 +40,29 @@ object `package`{
   }
   @compileTimeOnly("implementation detail of flow comprehensions. don't use yourself")
   implicit class Embed[M[_],T](m: M[T]){
-    /**
-    Adds a monad to the surrounding comprehension
-    
-    Analog to .value in sbt and await in scala-async
-
-    Alternative name candidates or potential aliases: value, ~, ?, &, embed, flow, in, enter, open, dive, each
-
-    flat[M]{ c =>
-      val x = c?xs
-      ,,,
-    }
-
-    is identical to 
-
-    for{
-      x <- xs
-      ...
-    } yield ...
-
-    */
     @compileTimeOnly("the prefix ? operator can only be used in a flow comprehension scope such as flat{...}, flow{...}")
     def unary_? : T = ???
   }
-  /*
-  implicit class Embed2[M[_],K[_],T](m: K[M[T]]){
-    //@compileTimeOnly("the prefix ? operator can only be used in a flow comprehension scope such as flat{...}, flow{...}")
-    def unary_? : T = ???
+
+  implicit def allowOmitedContextParam[M[_], T](t: T): MonadContext[M] => T = ???
+  implicit class PostfixExtract[M[_], T](mt: M[T]) {
+    def value: T = ???
   }
-  */
 
-  /**
-  Works just like for-comprehensions with extra power.
+  // implicit def implicitExtract[M[_], T](mt: M[T])(implicit mc: MonadContext[M]): T = ???
+  // implicit def extendImplicit[M[_], T, U](mt: M[T])(
+  //   implicit mc: MonadContext[M], chain: T => U
+  // ): U = ???
 
-  Alternative name candidates: $, seq, >>
-
-  Works sequentially, meaning in
-
-  <code>
-  flat[Future]{ c =>
-    val a = c?Future(now)
-    val b = now
-    val c = c?Future(now)
-    (a,b,c)
-  }
-  </code>
-
-  a < b < c
-
-  */
   def flat[M[_]] = new flat[M]
-  /*
-  // FIXME: Concerns: changing data flow could be unexpected to readers of the code. How can we ease that?
-
-  /**
-  Like for-comprehensions, but non-sequential when possible for better performance.
-
-  Alternative name candidates: $$
-
-  Works non-sequentially, meaning in
-
-  <code>
-  flat[Future]{ c =>
-    val a = c?Future(now)
-    val b = now
-    val c = c?Future(now)
-    (a,b,c)
-  }
-  </code>
-
-  it is not guaranteed (even unlikely) that a < b < c.
-
-  @see https://github.com/jedesah/computation-expressions#an-example-where-it-is-better-to-use-a-for-comprehension
-  */
-  class flow[M[_]]
-  def flow[M[_]] = new flow[M]
-  */
+  def transform[M[_]] = new transform[M]
+  def show(t: Any): Unit = macro FlowMacros.show
+  def gui(t: Any): Unit = macro FlowMacros.gui
+  def runtime(t: Any): reflect.runtime.universe.Tree = macro FlowMacros.runtime
+  def echo[T](t: T): T = macro FlowMacros.echo[T]
 }
 
-sealed abstract class Comprehension[M[_]]{ // FIXME: what happens if calling a method on this type that is implemented by macros in children? no such method error?
-  //def apply[T](scope: M[FlowContext] => T): M[T]
-  //def apply[T](scope: => T): M[T]
+sealed abstract class Comprehension[M[_]] {
 }
 final class MonadContext[M[_]]{
   /** transform the surrounding monad at this point */
@@ -139,198 +73,416 @@ final class MonadContext[M[_]]{
   def ?[T](monad: M[T]): T = ???
 }
 class flat[M[_]] extends Comprehension[M]{
-  def apply[T](comprehension: MonadContext[M] => T): M[T] = macro FlowMacros.flat[M[_],T]
-  //def apply[T](scope: => T): M[T] = ???
+  def apply[T](comprehension: MonadContext[M] => T): M[T] = macro FlowMacros.flat[M[T],T]
 }
-object debugMacro{
-  def apply[T](tree: T): T = macro FlowMacros.debugMacro
+class transform[M[_]] {
+  def apply[T]
+    (returnName: String)
+    (transforms: String*)
+    (comprehension: MonadContext[M] => M[T]): M[T] =
+      macro FlowMacros.transform[M[_], T]
 }
-/*
-class flow[M[_]] extends Comprehension[M]{
-  @compileTimeOnly("")
-  def apply[T](comprehension: MonadContext[M] => T): M[T] = ???
-  //def apply[T](scope: => T): M[T] = ???
-}
-*/
 
 import scala.reflect.macros.blackbox
-class FlowMacros(val c: blackbox.Context){
+
+class FlowMacros(val c: blackbox.Context) {
   import c.universe._
+  import c.weakTypeOf
+  import c.internal
 
-  val pkg = q"org.cvogt.flow.`package`"
-  val conv = q"$pkg.omitFlowContextMonad"
+  val visualizer = new Visualizer[c.type](c)
+  import visualizer._
 
-  object RemoveFlowContextTypeAnnotations extends Transformer {
-    override def transform(tree: Tree) = {
-      val t = tree match {
-        case q"$mods val $name : $ttree = $_" if ttree.symbol == weakTypeOf[FlowContext].typeSymbol =>
-          q"$mods val $name : ${TypeTree()}"
-        case q"$lhsT[..$ttrees](...$argsT)" if ttrees.map(_.symbol).contains( weakTypeOf[FlowContext].typeSymbol ) =>
-          q"$lhsT(...$argsT)"
-        case q"$lhsT.$rhsT[..$ttrees](...$argsT)" if ttrees.map(_.symbol).contains( weakTypeOf[FlowContext].typeSymbol ) =>
-          q"$lhsT.$rhsT(...$argsT)"
-        case other => other
-      }
-      super.transform(t)
+  val debug =
+    sys.props.get("flat_debug_transforms").getOrElse("").split(",").toSet
+
+  val verbose =
+    sys.props.get("flat_debug_verbose") match {
+      case Some("true") => true
+      case _ => false
     }
-  }
 
-  /** like identity but prints desugared code and tree */
-  def debugMacro(tree: Tree): Tree = {
-    println("code:\n  "+tree)
-    println("Tree:\n  "+showRaw(tree))
-    tree
-  }
-  def flat[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
+  val browse =
+    sys.props.get("flat_browse_transforms").getOrElse("").split(",").toSet
+
+  import org.cvogt.flow.transforms._
+
+  val allTransforms = Seq[Transform](
+    ImplicitExtractions,
+    PostfixExtractions,
+    ValidateLazy,
+    Normalize,
+    RewriteExtractions
+  )
+
+  def transform[M: WeakTypeTag, T: WeakTypeTag](returnName: Tree)(transforms: Tree*)(comprehension: Tree): Tree = {
     comprehension match {
-      case q"($flowContext) => $e" =>
-        val M = weakTypeOf[M]
-        val companion = M.typeSymbol.companion
-        def unit(tree: Tree) = q"implicitly[Constructor[$M]].create($tree)"
-
-        def transformExtract(tree: Tree): (List[Tree], Tree) = {
-          object transformer extends Transformer {
-            val extracted = collection.mutable.MutableList[Tree]()
-            override def transform(tree: Tree) = {
-              val t = tree match {
-                case t2@q"$flowContextUsage.?[$tpe]($expr)" if flowContextUsage.symbol == flowContext.symbol => 
-                  val name = c.freshName
-                  val (statements, texpr) = transformExtract(expr)
-                  val v = q"val ${TermName(name)}: $tpe = $flowContextUsage.?[$tpe]($texpr)"
-                  extracted ++= (statements :+ v)
-                  q"${Ident(TermName(name))}"
-
-                case other => other
-              }
-              super.transform(t)
-            }
-          }
-          val res = transformer.transform(tree)
-          (transformer.extracted.to[List], res)
+      case q"($ctxNme: $tpe) => $body" =>
+        val m = weakTypeOf[M].typeConstructor
+        val returnNme = returnName match {
+          case Literal(Constant(nme: String)) => TermName(nme)
+          case _ => c.abort(returnName.pos, "return name must be a String literal")
         }
+        transforms match {
+          case Nil =>
+            internal.changeOwner(body, comprehension.symbol, comprehension.symbol.owner)
+          case (t@Literal(Constant(currentTransformName: String))) :: remainingTransformations =>
+            def ifDebug(body: => Unit): Unit = {
+              if(debug(currentTransformName)) body
+              else ()
+            }
+            def ifVerbose(body: => Unit): Unit = {
+              if (debug(currentTransformName) && verbose) body
+              else ()
+            }
+            def ifBrowse(body: => Unit): Unit = {
+              if(browse(currentTransformName)) body
+              else ()
+            }
 
-        // untypechecking only seems to work reliably upfront.
-        // As a consequence, all of the following processes pairs of
-        // corresponding typed trees and untyped tres so both variants
-        // are available as needed. The untyped trees are used
-        // to build the eventual resulting tree. The typed trees
-        // are used to examine the type information of the input
-        // trees.
-        // value names ending in T mean typed trees from here on.
-        // The same names excluding the T mean the corresponding untyped trees
-        (e, c.untypecheck(e)) match {
-          case (
-            q"""..$statementsT; $resultT""", // <- 
-            q"""..$statements;  $result """  // <- 
-          ) =>
-            /* The following folds over the comprehension statements from top to bottom.
-             * Every step results in a new scope (the names of values bound by the
-             * comprehension at this point) and a context, which is a function that takes
-             * a tree and embeds it into another tree that binds the required
-             * values. The context is effectively a continuation, which allows
-             * folding forward throw the flat of statements while allowing
-             * the following statment decide how it handles the continuation of previous
-             * statments. This allows closing the iteration and assigning the result to
-             * a val for example, in order to call contextual transformers
-             * (sortBy, filter, ...) on the iteration up to this point.
-            */
+            allTransforms.find(_.name == currentTransformName) match {
 
-            val (additionalStatementsT, expressionT) = transformExtract(resultT)
-            val (additionalStatements, expression) = transformExtract(result)
+              case Some(currentTransform) =>
 
-            val statementPairs = (
-              (statementsT.flatMap(transformExtract(_) match{ case (list,one) => list :+ one }) ++ additionalStatementsT)
-              zip
-              (statements.flatMap(transformExtract(_) match{ case (list,one) => list :+ one }) ++ additionalStatements)
-            )
+                val utils = new TransformUtils[c.type](c) {
+                  val M: Type = m.typeConstructor
+                  val contextName: TermName = ctxNme
+                }
+                import utils._
 
-            val (_, continuation) = statementPairs.foldLeft(
-              ( List[(TermName,Tree)](), identity[Tree] _ )
-            ){
-              case (
-                ( scope, context ),
-                (
-                  valdefT @ q"val $nameT: $tpeT = $flowContextUsage.?[$t]($mT)",
-                  valdef  @ q"val $name : $tpe  = $flowContextUsageT.?[$tT]($m )"
-                )
-              )  if flowContextUsage.symbol == flowContext.symbol && flowContextUsageT.symbol == flowContext.symbol
-               =>
-                val param = q"val $name: ${TypeTree()}"
-                (
-                  // omit generated aliases from being captured - users can't refer to them anyways
-                  if(name.toString.startsWith("fresh$macro$")) scope else ((name, tpeT) :: scope),
-                  continue => context(q"$m.flatMap( $param => $continue )")
-                )
-              case ( ( scope, context ), (q"$ctxT.!($transformerT)", q"$ctx.!($transformer)") ) if ctx.symbol == flowContext.symbol =>
-                val boundNames = scope.map(_._1).map(Ident.apply _)
+                ifDebug {
+                  println("====================")
+                  println(s"running $currentTransformName")
+                  println(s"$currentTransform input:")
+                  println(showCode(comprehension))
+                }
 
-                object ReplaceFlowScope extends Transformer {
-                  override def transform(tree: Tree) = {
-                    val t = tree match {
-                      case t@q"($arg) => $expr" if arg.tpt.tpe != null && arg.tpt.tpe =:= typeOf[FlowContext] =>
-                        val pattern =  pq"(..${scope.map(_._1)})"
-                        // FIXME: can we move the extractor below into the argument?
-                        q"""{
-                          arg =>
-                            val $pattern = arg
-                            ${transform(expr)}
-                        }"""
-                      case other => other
-                    }
-                    super.transform(t)
+                case class Step(parts: List[Int] = List(1)) {
+                  def next = Step(
+                    parts.init :+ (parts.last + 1)
+                  )
+                  def sub = Step(parts :+ 1)
+                  override def toString = parts.mkString(".")
+                }
+
+                def traverse(
+                  done: List[Tree],
+                  remaining: List[Tree],
+                  step: Step
+                ): Tree = {
+                  remaining match {
+                    case h :: t =>
+                      val ctx = new TransformContext[c.type](c) {
+                        val M: Type = m.typeConstructor
+                        val contextName: TermName = ctxNme
+                        val returnName = returnNme
+                        val returnType = body.tpe
+                        def recur(t: Tree): Tree = {
+                          ifVerbose {
+                            println(s"""$step - recurring on $t""")
+                            println(s"""$step - transforming to prepare for recurrence as ${step.sub}""")
+                          }
+                          val nonEmptyBody = t match {
+                            case EmptyTree => q"()"
+                            case nonEmpty => nonEmpty
+                          }
+                          val returnName = TermName(c.freshName("return"))
+                          val withCorrectReturnValue = {
+                            val lines = nonEmptyBody.shard
+                              (lines.init :+ q"val $returnName = ${liftM(lines.last)}" :+ q"$returnName").unify
+                          }
+                          ifVerbose {
+                            println(s"""$step - transformed to $withCorrectReturnValue"""")
+                            println(s"""$step - beginning recurrence"""")
+                          }
+                          traverse(Nil, withCorrectReturnValue.shard, step.sub)
+                        }
+                      }
+                      import ctx._
+
+                      ifVerbose {
+                        println(s"""$step - input: $h""")
+                      }
+                      currentTransform.rules[c.type](ctx).find { rw =>
+                        rw.pf.isDefinedAt(h)
+                      } match {
+                        case None =>
+                          ifVerbose {
+                            println(s"""$step - error: no matching rewrite rule"""")
+                          }
+                          c.abort(
+                            c.enclosingPosition,
+                            "no matching rewrite rule for "++showCode(h)
+                          )
+                        case Some(rw) =>
+                          ifVerbose {
+                            println(s"""$step - matching rule: "${rw.name}"""")
+                          }
+                          rw.pf(h) match {
+                            case Accept =>
+                              ifVerbose {
+                                println(s"""$step - result: accept line""")
+                              }
+                              traverse(done :+ h, t, step.next)
+                            case RewriteTo(replacement, reprocess) =>
+                              ifVerbose {
+                                println(s"""$step - result: rewrite line""")
+                                if (reprocess) {
+                                  println(s"""$step - rewriteTo: ${showCode(replacement)}""")
+                                } else {
+                                  println(s"""$step - accept as: ${showCode(replacement)}""")
+                                }
+                              }
+                              if (reprocess) traverse(done, replacement.shard ++ t, step.next)
+                              else traverse(done ++ replacement.shard, t, step.next)
+                            case TransformRest(f) =>
+                              ifVerbose {
+                                println(s"""$step - result: transform rest""")
+                                println(s"""$step - processing rest so we can do the transform""")
+                              }
+                              val input = traverse(Nil, t, step.sub)
+                              val output = f(input)
+                              ifVerbose {
+                                println(s"""$step - transform input: ${showCode(input)}""")
+                                println(s"$step - transform output: ${showCode(output)}")
+                              }
+                              traverse(done ++ output.shard, Nil, step.next)
+                          }
+                      }
+                    case Nil =>
+                      ifVerbose {
+                        println(s"""$step - done""")
+                      }
+                      val result = q"""
+                        _root_.org.cvogt.flow.transform[$m]($returnName)(..$remainingTransformations) {
+                          ($ctxNme: _root_.org.cvogt.flow.MonadContext[$m]) => ..$done
+                        }
+                      """
+                      result
                   }
                 }
-                val captured = context{
-                  unit(q"(..$boundNames)")
+
+                val correctlyTyped = {
+                  if (currentTransform.isTyped) body
+                  else c.untypecheck(body)
                 }
-                val params = scope.map{ case(name, tpe) => ValDef(Modifiers(Flag.PARAM),name,tpe,EmptyTree) }
-                val before = transformer match {
-                  case q"($arg) => $expr" => 
-                    val q"$_ val $name: $_ = $_" = arg
-                    q"""
-                      val $name = $captured
-                      $expr
-                    """
-                  case q"$other" => q"$other($captured)"
+
+                ifBrowse {
+                  visualize(s"$currentTransformName input" -> correctlyTyped)
                 }
-                //println("before:"+before)
-                val closed =  ReplaceFlowScope.transform(before)
-                //println("closed:"+closed)
-                (scope, continue => {
-                  val func =
-                    if(params.size > 1)
-                      q"((..$params) => $continue).tupled"
-                    else
-                      q"((..$params) => $continue)"
-                  val name = c.freshName
-                  q"""
-                    val ${TermName(name)} = $closed
-                    ${Ident(TermName(name))}.flatMap{
-                      $func            
-                    }
-                  """
-                })
-              case (
-                ( scope, context ),
-                (
-                  valdefT @ q"val $nameT: $tpeT = $otherT",
-                  valdef  @ q"val $name : $tpe  = $other"
+
+                val result = traverse(
+                  Nil,
+                  correctlyTyped.shard,
+                  Step()
                 )
-              ) =>
-                (
-                  (name, tpeT) :: scope,
-                  continue => context(q"$valdef; $continue")
-                )
-              case ( ( scope, context ), (otherT, other) ) => 
-                (scope, continue => context(q"$other; $continue"))
+
+                ifBrowse {
+                  visualize(s"$currentTransformName output" -> result)
+                }
+
+                ifDebug {
+                  println(s"$currentTransform output:")
+                  println(showCode(result))
+                  println("====================")
+                }
+                result
+              case None =>
+                c.abort(t.pos, "unknown transformation phase")
             }
-            val res = continuation(unit(expression))
-            //println(e)
-            //println(res)
-            //println(showRaw(res))
-            RemoveFlowContextTypeAnnotations.transform(res)
+          case other :: rest =>
+            c.abort(other.pos, s"transformation phases must be identified with literal Strings")
         }
-      case x => throw new Exception(x.toString)
     }
   }
+
+
+//   //   def doContextTransforms(next: Transformation) =
+//   //     Transformation("context transform") { t =>
+
+//   //       sealed trait ScopeOp
+//   //       case class DefineVal(valDef: ValDef) extends ScopeOp
+//   //       case class DefineObject(modDef: ModuleDef) extends ScopeOp
+//   //       case class DefineDef(defDef: DefDef) extends ScopeOp
+//   //       case class ImportSomething(imported: Import) extends ScopeOp
+
+//   //       // For now, we'll ignore local classes and traits, but we should support them
+//   //       case class DefineClass(defined: ClassDef) extends ScopeOp
+
+//   //       def doContextTransform(
+//   //         trees: List[Tree],
+//   //         scopeOps: List[ScopeOp],
+//   //         done: List[Tree]
+//   //       ): Tree = trees match {
+//   //         case Nil => next.transform(done.unify)
+//   //         case (v: ValDef) :: rest if !v.mods.hasFlag(Flag.ARTIFACT) =>
+//   //           doContextTransform(
+//   //             rest,
+//   //             scopeOps :+ DefineVal(v),
+//   //             done :+ v
+//   //           )
+//   //         case (d: DefDef) :: rest =>
+//   //           doContextTransform(
+//   //             rest,
+//   //             scopeOps :+ DefineDef(d),
+//   //             done :+ d
+//   //           )
+//   //         case (m: ModuleDef) :: rest =>
+//   //           doContextTransform(
+//   //             rest,
+//   //             scopeOps :+ DefineObject(m),
+//   //             done :+ m
+//   //           )
+//   //         case (i: Import) :: rest =>
+//   //           doContextTransform(
+//   //             rest,
+//   //             scopeOps :+ ImportSomething(i),
+//   //             done :+ i
+//   //           )
+//   //         case q"""
+//   //           $contextName.! { ($nme1: $tpe1) =>
+//   //             $nme.$op { ..$stats; ($nme2: $tpe2) => $expr }
+//   //           }
+//   //         """ :: rest =>
+//   //           val body = q"..$stats; $expr"
+//   //           val prefix = next.transform(q"..$done")
+//   //           val paramName = TermName(c.freshName("param"))
+//   //           val transformed = q"$prefix.$op(($paramName: Any) => $body)"
+//   //           val continued = doContextTransform(rest, Nil, Nil)
+//   //           q"$transformed.flatMap { (paramName: Any) => $continued }"
+//   //         case other :: rest =>
+//   //           doContextTransform(
+//   //             rest,
+//   //             scopeOps,
+//   //             done :+ other
+//   //           )
+//   //       }
+//   //       doContextTransform(t.shard, Nil, Nil)
+//   //     }
+
+
+
+//   /** like identity but prints desugared code and tree */
+//   def debugMacro(tree: Tree): Tree = {
+//     println("code:\n  "+tree)
+//     println("Tree:\n  "+showRaw(tree))
+//     tree
+//   }
+
+
+  def showSym(s: Symbol) = {
+    println(c.universe.show(s))
+    println(c.universe.showDecl(s))
+    println(showRaw(s, printIds=true, printOwners=true, printTypes=true))
+    println(showRaw(s.info, printIds=true, printOwners=true, printTypes=true))
+  }
+
+  // def show(t: Tree): Tree = {
+  //   println(showRaw(c.macroApplication.symbol, printIds=true, printOwners=true, printTypes=true))
+  //   println(showCode(c.macroApplication, printIds=true,printOwners=true,printTypes=true,printRootPkg=true))
+  //   println(showRaw(c.macroApplication, printIds=true, printOwners=true,printTypes=true))
+  //   val q"$identity { $ctx => ${v@q"val $x = 3"}; $y }" = t
+  //   showSym(ctx.symbol)
+  //   showSym(ctx.symbol.owner)
+  //   showSym(ctx.symbol.owner.owner)
+  //   q"()"
+  // }
+
+  def show(t: Tree): Tree = {
+    println(showCode(t, printIds=true, printOwners=true, printTypes=true))
+    println(showRaw(t, printIds=true, printOwners=true, printTypes=true))
+    showSym(t.symbol)
+    showSym(t.symbol.owner)
+    q"()"
+  }
+
+  def gui(t: Tree): Tree = {
+    visualize("gui" -> t)
+    q"()"
+  }
+
+  def flat[M: c.WeakTypeTag, T: c.WeakTypeTag](comprehension: Tree): Tree = {
+    if (verbose) {
+      println(s"got: $comprehension")
+    }
+
+    val withParam = comprehension match {
+      case q"($ctxParam) => $body" => comprehension
+      case other =>
+        val transformer = new Transformer {
+          override def transform(t: Tree): Tree = t match {
+            case q"org.cvogt.flow.`package`.allowOmitedContextParam[..$targs]($body)" =>
+              super.transform(body)
+            case other => super.transform(other)
+          }
+        }
+        val transformed = transformer.transform(other)
+        val paramName = TermName(c.freshName("ctx"))
+        q"($paramName: ${TypeTree()}) => $transformed"
+    }
+    c.untypecheck(withParam) match {
+      case q"($ctxParam) => $body" =>
+
+        if (verbose) {
+          println(s"transformed to: $body")
+        }
+
+        val utils = new TransformUtils[c.type](c) {
+          val M = weakTypeOf[M].typeConstructor
+          val contextName = ctxParam.name
+        }
+        import utils._
+
+        val nonEmptyBody = body match {
+          case EmptyTree => q"()"
+          case nonEmpty => nonEmpty
+        }
+
+        val returnName = TermName(c.freshName("return"))
+
+        val withCorrectReturnValue = {
+          val lines = nonEmptyBody.shard
+          (lines.init :+ q"val $returnName = ${liftM(lines.last)}" :+ q"$returnName").unify
+        }
+
+        val function = q"""{ ($ctxParam) =>
+          $withCorrectReturnValue
+        }
+        """
+
+        val debug = sys.props.get("flat_debug").map(_.toBoolean).getOrElse(false)
+
+        val transformNames = allTransforms.map(p => Literal(Constant(p.name)))
+        val result = q"""
+          _root_.org.cvogt.flow.transform[$M][${weakTypeOf[T]}](${Literal(Constant(returnName.toString))})(..$transformNames)($function)
+        """
+        if (verbose) {
+          println(s"transformed to: $result")
+        }
+
+        result
+    }
+  }
+
+  def echo[T](t: Tree): Tree = t
+
+  def runtime(t: Tree): Tree = {
+    val ru = universe.internal.gen.mkRuntimeUniverseRef
+    val rm = EmptyTree
+    val rt = c.reifyTree(ru, rm, t)
+    q"$rt.tree"
+  }
+
+  def nameBasedConstruct[C: WeakTypeTag]: Tree = {
+    val C = weakTypeOf[C].typeConstructor
+    val CCompanion = C.typeSymbol.companion
+    val className = TypeName(c.freshName("Construct"))
+    q"""
+      class $className extends _root_.org.cvogt.flow.Construct[$C] {
+        def create[T](t: T) = $CCompanion.apply(t)
+      }
+      new $className
+    """
+  }
+
 }
