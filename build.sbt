@@ -6,6 +6,21 @@ licenses in ThisBuild := Seq(
   "BSD Simplified" -> url("https://opensource.org/licenses/BSD-2-Clause")
 )
 
+developers in ThisBuild := List(
+  Developer(
+    id = "cvogt",
+    name = "Chris Vogt",
+    email = "cvogt@cvogt.org",
+    url = url("http://cvogt.org")
+  ),
+  Developer(
+    id = "clhodapp",
+    name = "Chris Hodapp",
+    email = "clhodapp1@gmail.com",
+    url = url("https://github.com/clhodapp")
+  )
+)
+
 scalaVersion in ThisBuild := "2.11.7"
 
 val EmmVersion = "0.2.1"
@@ -37,3 +52,5 @@ releaseCommitMessage := {
   if (isSnapshot.value) s"Setting version to ${version.value} for next development iteration"
   else s"Setting version to ${version.value} for release"
 }
+
+releasePublishArtifactsAction := PgpKeys.publishSigned.value
