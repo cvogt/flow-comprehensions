@@ -52,3 +52,5 @@ releaseCommitMessage := {
   if (isSnapshot.value) s"Setting version to ${version.value} for next development iteration"
   else s"Setting version to ${version.value} for release"
 }
+
+releasePublishArtifactsAction := PgpKeys.publishSigned.value
