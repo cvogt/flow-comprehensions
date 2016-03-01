@@ -1,4 +1,8 @@
 
+licenses in ThisBuild := Seq(
+  "Simplified BSD License" -> url("https://opensource.org/licenses/BSD-2-Clause")
+)
+
 scalaVersion := "2.11.7"
 
 val EmmVersion = "0.2.1"
