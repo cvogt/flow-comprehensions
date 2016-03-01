@@ -1,6 +1,8 @@
 
 organization in ThisBuild := "org.scala-comprehensions"
 name := "flow-comprehensions"
+homepage := Some(url("https://github.com/cvogt/flow-comprehensions"))
+description := "Simpler and more powerful alternative to Scala's built-in for-comprehension syntax"
 
 licenses in ThisBuild := Seq(
   "BSD Simplified" -> url("https://opensource.org/licenses/BSD-2-Clause")
@@ -39,7 +41,8 @@ publishMavenStyle in ThisBuild := true
 scmInfo in ThisBuild := Some(
   ScmInfo(
     browseUrl = url("https://github.com/cvogt/flow-comprehensions"),
-    connection = "ssh://git@github.com:/cvogt/flow-comprehensions.git"
+    connection = "ssh://git@github.com:/cvogt/flow-comprehensions.git",
+    devConnection = Some("ssh://git@github.com:/cvogt/flow-comprehensions.git")
   )
 )
 
