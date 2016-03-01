@@ -31,3 +31,9 @@ scmInfo in ThisBuild := Some(
 addCompilerPlugin("org.spire-math" %% "kind-projector" % "0.7.1")
 
 scalacOptions in ThisBuild := List("-feature", "-deprecation")
+
+releaseTagComment := s"Releasing ${(version in ThisBuild).value}"
+releaseCommitMessage := {
+  if (isSnapshot.value) s"Setting version to ${version.value} for next development iteration"
+  else s"Setting version to ${version.value} for release"
+}
