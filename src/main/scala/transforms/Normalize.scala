@@ -147,7 +147,7 @@ case object Normalize extends Transform {
             $newValDef
           """)
       },
-      Rule("extract in argument") {
+      Rule("extract in argument in argument to infix function") {
         case v@q"$mods val $nme: $tpe = $pre.$op[..$targs](...$vargss)" if vargss.exists(_.exists(hasExtracts)) =>
           val newVargss = vargss.map { vargs =>
             vargs.map {
