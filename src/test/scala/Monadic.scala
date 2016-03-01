@@ -29,13 +29,13 @@ class MonadicTests extends FunSuite with org.scalactic.TypeCheckedTripleEquals {
   }
 
   test("support something like the vision") {
-    // val description = flat[Task] {
-    //   val person = Dao.getPerson(1).value
-    //   val address = Dao.getAddress(person.livesAt).value
-    //   val name = person.name
-    //   val rich = if (person.isRich) "is rich" else "is not rich"
-    //   s"$name $rich and lives at $address"
-    // }
-    // assert(description.unsafePerformSync == "Peter is not rich and lives at Brooklyn")
+    val description = flat[Task] {
+      val person = Dao.getPerson(1).value
+      val address = Dao.getAddress(person.livesAt).value
+      val name = person.name
+      val rich = if (person.isRich) "is rich" else "is not rich"
+      s"$name $rich and lives in ${address.city}"
+    }
+    assert(description.unsafePerformSync == "Peter is not rich and lives in Brooklyn")
   }
 }
