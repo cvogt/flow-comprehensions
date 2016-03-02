@@ -7,6 +7,11 @@ You can try a work-in-progress version by adding the following to your `build.sb
 libraryDependencies += "org.scala-comprehensions" %% "flow-comprehensions" % "0.0.3"
 ```
 
+For sbt 0.13.11+, also add:
+```
+useJCenter := true
+```
+
 Scala flow-comprehensions are a simpler and more powerful alternative to Scala's built-in for-comprehension syntax.
 
 Scala:
