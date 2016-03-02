@@ -1,4 +1,11 @@
-*Early experimentation phase. Don't try to use this.*
+
+This project is still very much in development, but we are publishing builds to JCenter.
+
+You can try a work-in-progress version by adding the following to your `build.sbt`:
+
+```
+libraryDependencies += "org.scala-comprehensions" %% "flow-comprehensions" % "0.0.3"
+```
 
 Scala flow-comprehensions are a simpler and more powerful alternative to Scala's built-in for-comprehension syntax.
 
@@ -37,9 +44,9 @@ for{
 Flow:
 
 ```scala
-sequence[List]{ c =>
-  val i = ~List(1,2,3)
-  val j = ~List(2,3,4)
+sequence[List]{
+  val i = List(1,2,3).value
+  val j = List(2,3,4).value
   c filter (i > 2)
   i*j
 }
