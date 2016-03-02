@@ -52,7 +52,6 @@ Flow:
 sequence[List]{
   val i = List(1,2,3).value
   val j = List(2,3,4).value
-  c filter (i > 2)
   i*j
 }
 
