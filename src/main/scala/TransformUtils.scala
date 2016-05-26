@@ -4,13 +4,9 @@ package org.cvogt.flow
 import reflect.macros.blackbox
 
 abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
-
-  val universe: macroContext.universe.type = macroContext.universe
-
-  import universe._
+  import macroContext.universe._
 
   val visualizer = new Visualizer[macroContext.type](macroContext)
-  import visualizer._
 
   val M: Type
   val contextName: TermName
@@ -66,11 +62,11 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
 
   object PostfixExtract {
     def apply(body: Tree, tpe: Tree): Tree =
-      q"org.cvogt.flow.`package`.PostfixExtract[$M, $tpe]($body).value"
+      q"org.cvogt.flow.`package`.MonadExtensions[$M, $tpe]($body).value"
     def unapply(t: Tree): Option[(Tree, Tree)] = t match {
-      case q"org.cvogt.flow.`package`.PostfixExtract[$m, $tpe]($body).value" if m.tpe <:< M =>
+      case q"org.cvogt.flow.`package`.MonadExtensions[$m, $tpe]($body).value" if m.tpe <:< M =>
         Some((body, tpe))
-      case q"org.cvogt.flow.`package`.PostfixExtract($body).value" =>
+      case q"org.cvogt.flow.`package`.MonadExtensions($body).value" =>
         Some((body, TypeTree()))
       case other => None
     }
@@ -107,7 +103,7 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
     block
   }
 
-  implicit class TreeOps(t: universe.Tree) {
+  implicit class TreeOps(t: Tree) {
     def shard: List[Tree] = t match {
       case Block(statements, returnValue) => statements :+ returnValue
       case Typed(Block(statements, returnValue), tpt) => statements :+ returnValue
@@ -148,7 +144,7 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
     }
   }
 
-  implicit class ValDefOps(d: universe.ValDef) {
+  implicit class ValDefOps(d: ValDef) {
     def ident: Ident = {
       val ident = Ident(d.name)
       internal.setSymbol(ident, d.symbol)
@@ -157,7 +153,7 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
     }
   }
 
-  implicit class DefDefOps(d: universe.DefDef) {
+  implicit class DefDefOps(d: DefDef) {
     def ident: Ident = {
       val ident = Ident(d.name)
       internal.setSymbol(ident, d.symbol)
@@ -166,7 +162,7 @@ abstract class TransformUtils[C <: blackbox.Context](val macroContext: C) {
     }
   }
 
-  implicit class ListTreeOps(ts: List[universe.Tree]) {
+  implicit class ListTreeOps(ts: List[Tree]) {
     def unify: Tree = {
       q"..$ts"
     }
