@@ -57,3 +57,6 @@ releaseCommitMessage := {
 }
 
 releasePublishArtifactsAction := PgpKeys.publishSigned.value
+
+enablePlugins(ScalaJSPlugin)
+
